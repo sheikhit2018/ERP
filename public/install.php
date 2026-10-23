@@ -19,6 +19,7 @@ function envValue(string $v): string { return "'".str_replace(['\\', "'", "\n", 
 
 $errors = [];
 $done = false;
+$existing = false;
 $installed = file_exists($lock);
 $host = strtolower(explode(':', $_SERVER['HTTP_HOST'] ?? 'localhost')[0]);
 $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
@@ -44,19 +45,29 @@ $ready = !in_array(false, $checks, true);
 if (!$installed && $ready && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     if (!preg_match('/^[A-Za-z0-9_]+$/', $old['db_name'])) $errors[] = 'Database name may only contain letters, numbers and _.';
     if (!preg_match('/^[A-Za-z0-9_]+$/', $old['db_user'])) $errors[] = 'Database user may only contain letters, numbers and _.';
-    if ($old['company'] === '') $errors[] = 'Company name is required.';
-    if ($old['owner_name'] === '') $errors[] = 'Your name is required.';
-    if (!filter_var($old['owner_email'], FILTER_VALIDATE_EMAIL)) $errors[] = 'A valid email is required.';
-    if (strlen($_POST['owner_pass'] ?? '') < 8) $errors[] = 'Owner password must be at least 8 characters.';
+    // Only the database on this server may be used (stops anyone pointing the app at a foreign database).
+    if (!in_array($old['db_host'], ['127.0.0.1', 'localhost'], true)) $errors[] = 'Database host must be 127.0.0.1 (the database on this server).';
 
+    $existing = false; // true = re-connecting this code to an Opryx database that already has this company
     if (!$errors) {
         try {
             $pdo = new PDO("mysql:host={$old['db_host']};port=".(int) $old['db_port'].";dbname={$old['db_name']};charset=utf8mb4",
                 $old['db_user'], $_POST['db_pass'] ?? '', [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 5]);
+            try {
+                $q = $pdo->prepare('SELECT COUNT(*) FROM tenant_domains WHERE hostname = ?');
+                $q->execute([$host]);
+                $existing = (int) $q->fetchColumn() > 0;
+            } catch (Throwable) { $existing = false; }
             $pdo = null;
         } catch (Throwable $e) {
             $errors[] = 'Could not connect to the database: '.$e->getMessage();
         }
+    }
+    if (!$errors && !$existing) {
+        if ($old['company'] === '') $errors[] = 'Company name is required.';
+        if ($old['owner_name'] === '') $errors[] = 'Your name is required.';
+        if (!filter_var($old['owner_email'], FILTER_VALIDATE_EMAIL)) $errors[] = 'A valid email is required.';
+        if (strlen($_POST['owner_pass'] ?? '') < 8) $errors[] = 'Owner password must be at least 8 characters.';
     }
 
     if (!$errors) {
@@ -85,7 +96,7 @@ if (!$installed && $ready && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             $kernel->bootstrap();
             $kernel->call('config:clear');
             if ($kernel->call('migrate', ['--force' => true]) !== 0) throw new RuntimeException("Migration failed:\n".$kernel->output());
-            App\Support\TenantProvisioner::create($old['company'], $host, $old['owner_name'], $old['owner_email'], $_POST['owner_pass']);
+            if (!$existing) App\Support\TenantProvisioner::create($old['company'], $host, $old['owner_name'], $old['owner_email'], $_POST['owner_pass']);
             file_put_contents($lock, 'Installed '.date('c')." for $host\n");
             $done = true;
         } catch (Throwable $e) {
@@ -125,7 +136,7 @@ if (!$installed && $ready && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 <?php if ($installed && !$done): ?>
   <div class="card ok">Opryx is already installed on this server. <br><a class="btn" href="/login">Go to login</a></div>
 <?php elseif ($done): ?>
-  <div class="card ok"><b>Installation complete.</b><br>Your company and owner login are ready. This installer is now locked.<br>
+  <div class="card ok"><b><?= $existing ? 'Reconnected to your existing data.' : 'Installation complete.' ?></b><br><?= $existing ? 'Your company, products and logins are unchanged.' : 'Your company and owner login are ready.' ?> This installer is now locked.<br>
     <a class="btn" href="/login">Log in now</a></div>
 <?php else: ?>
   <div class="card"><h2>1. Server check</h2><ul class="checks">
@@ -146,11 +157,12 @@ if (!$installed && $ready && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     <label>Database password</label><input type="password" name="db_pass" required>
 
     <h2 style="margin-top:24px">3. Your company &amp; owner login</h2>
-    <label>Company name</label><input name="company" value="<?= h($old['company']) ?>" placeholder="Sheikh IT" required>
+    <p class="hint">Already used Opryx with this database? Leave this part empty — your existing company and logins are kept.</p>
+    <label>Company name</label><input name="company" value="<?= h($old['company']) ?>" placeholder="Sheikh IT">
     <div class="hint">This company will open on <b><?= h($host) ?></b></div>
-    <label>Your name</label><input name="owner_name" value="<?= h($old['owner_name']) ?>" required>
-    <label>Login email</label><input type="email" name="owner_email" value="<?= h($old['owner_email']) ?>" required>
-    <label>Login password (min 8)</label><input type="password" name="owner_pass" minlength="8" required>
+    <label>Your name</label><input name="owner_name" value="<?= h($old['owner_name']) ?>">
+    <label>Login email</label><input type="email" name="owner_email" value="<?= h($old['owner_email']) ?>">
+    <label>Login password (min 8)</label><input type="password" name="owner_pass" minlength="8">
     <button type="submit">Install Opryx</button>
   </form>
   <?php endif; ?>
