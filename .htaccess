@@ -1,0 +1,13 @@
+# Opryx: when the whole project sits in the web folder (e.g. public_html/erp),
+# send every request into /public so .env, vendor/, storage/ are never reachable.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^\.well-known/ - [L]
+    RewriteRule ^opryx-unpack\.php$ - [L]
+    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+Options -Indexes

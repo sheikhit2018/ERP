@@ -1,0 +1,69 @@
+<?php
+
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\Web\{BomController, DashboardController, ManufacturingPageController, ProductController,
+    RawMaterialController, ReturnPageController, SalesOrderController, StockLedgerController, TeamController};
+use App\Http\Controllers\CourierReturnController;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/', fn () => auth()->check() ? redirect()->route('dashboard') : redirect()->route('login'));
+
+// Every ERP screen: resolve company from the domain -> require login -> require active membership/role.
+Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
+    Route::get('/dashboard', DashboardController::class)->name('dashboard');
+
+    Route::middleware('tenant.role:sales,warehouse,manufacturer')->group(function () {
+        Route::get('/products', [ProductController::class, 'index'])->name('products.index');
+        Route::get('/stock-ledger', StockLedgerController::class)->name('stock.ledger');
+    });
+    Route::middleware('tenant.role:warehouse')->group(function () {
+        Route::post('/products', [ProductController::class, 'store'])->name('products.store');
+        Route::put('/products/{product}', [ProductController::class, 'update'])->whereNumber('product')->name('products.update');
+        Route::post('/products/{product}/adjust', [ProductController::class, 'adjust'])->whereNumber('product')->name('products.adjust');
+    });
+
+    Route::middleware('tenant.role:manufacturer,warehouse')->group(function () {
+        Route::get('/raw-materials', [RawMaterialController::class, 'index'])->name('materials.index');
+        Route::post('/raw-materials', [RawMaterialController::class, 'store'])->name('materials.store');
+        Route::post('/raw-materials/{material}/adjust', [RawMaterialController::class, 'adjust'])->whereNumber('material')->name('materials.adjust');
+    });
+    Route::middleware('tenant.role:manufacturer')->group(function () {
+        Route::get('/boms', [BomController::class, 'index'])->name('boms.index');
+        Route::post('/boms', [BomController::class, 'store'])->name('boms.store');
+        Route::get('/manufacturing', [ManufacturingPageController::class, 'index'])->name('manufacturing.index');
+        Route::post('/manufacturing', [ManufacturingPageController::class, 'store'])->name('manufacturing.store');
+    });
+
+    Route::middleware('tenant.role:sales,warehouse')->group(function () {
+        Route::get('/orders', [SalesOrderController::class, 'index'])->name('orders.index');
+        Route::get('/orders/{order}', [SalesOrderController::class, 'show'])->whereNumber('order')->name('orders.show');
+    });
+    Route::middleware('tenant.role:sales')->group(function () {
+        Route::get('/orders/create', [SalesOrderController::class, 'create'])->name('orders.create');
+        Route::post('/orders', [SalesOrderController::class, 'store'])->name('orders.store');
+        Route::post('/orders/{order}/confirm', [SalesOrderController::class, 'confirm'])->whereNumber('order')->name('orders.confirm');
+        Route::post('/orders/{order}/cancel', [SalesOrderController::class, 'cancel'])->whereNumber('order')->name('orders.cancel');
+    });
+    Route::middleware('tenant.role:warehouse')->group(function () {
+        Route::post('/orders/{order}/handover', [SalesOrderController::class, 'handover'])->whereNumber('order')->name('orders.handover');
+        Route::post('/orders/{order}/delivered', [SalesOrderController::class, 'delivered'])->whereNumber('order')->name('orders.delivered');
+    });
+
+    Route::middleware('tenant.role:qc,warehouse')->group(function () {
+        Route::get('/returns', ReturnPageController::class)->name('returns.index');
+        // JSON endpoints used by the barcode QC panel (session + CSRF protected).
+        Route::post('/returns/scan', [CourierReturnController::class, 'scan'])->name('returns.scan');
+        Route::post('/returns/{return}/qc', [CourierReturnController::class, 'qc'])->whereNumber('return')->name('returns.qc');
+    });
+
+    Route::middleware('tenant.role:owner')->group(function () {
+        Route::get('/team', [TeamController::class, 'index'])->name('team.index');
+        Route::post('/team', [TeamController::class, 'store'])->name('team.store');
+        Route::put('/team/{member}', [TeamController::class, 'update'])->whereNumber('member')->name('team.update');
+    });
+
+    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
+    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+});
+
+require __DIR__.'/auth.php';
