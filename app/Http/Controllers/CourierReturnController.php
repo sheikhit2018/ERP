@@ -10,6 +10,6 @@ class CourierReturnController extends Controller {
     public function scan(Request $r, InventoryService $s) { return $this->details($s->scan($r->all(), (int)$r->user()->id)); }
     public function qc(Request $r, int $return, InventoryService $s) {
         $d = $r->validate(['decision'=>'required|in:QC_PASSED,DAMAGED']);
-        return $this->details($s->qc($return, $d['decision'], (int)$r->user()->id));
+        return $this->details($s->qc($return, $d['decision'], (int)$r->user()->id, $r->has('scans') ? (array)$r->input('scans') : null));
     }
 }

@@ -18,11 +18,11 @@ class DashboardController extends Controller {
             ->where('o.created_at', '>=', $today)->where('o.status', '!=', 'cancelled')
             ->sum(DB::raw('i.quantity * i.unit_price_minor'));
 
-        $lowStock = FinishedGoodStock::with('product:id,sku,name,low_stock_level')
+        $lowStock = FinishedGoodStock::with('product:id,sku,name,color,size,low_stock_level')
             ->whereHas('product', fn ($q) => $q->where('active', true))->get()
             ->filter(fn ($s) => $s->available_stock <= $s->product->low_stock_level)
             ->sortBy('available_stock')->take(8)->values()
-            ->map(fn ($s) => ['id' => $s->product_id, 'sku' => $s->product->sku, 'name' => $s->product->name,
+            ->map(fn ($s) => ['id' => $s->product_id, 'sku' => $s->product->sku, 'name' => $s->product->label,
                 'available' => (int) $s->available_stock, 'level' => (int) $s->product->low_stock_level]);
 
         $rawLow = RawMaterialStock::with('material:id,sku,name,base_unit,low_stock_level')->get()

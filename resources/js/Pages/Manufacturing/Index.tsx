@@ -27,7 +27,7 @@ export default function Manufacturing({ boms, orders }: PageProps<{ boms: Bom[];
                 <Card className="lg:col-span-2" title="Log production run">
                     <form onSubmit={submit} className="space-y-4 p-5">
                         <Field label="Product recipe" error={e.bom_id}><Select value={f.data.bom_id} onChange={(x) => f.setData('bom_id', x.target.value)} required>
-                            <option value="">Select…</option>{boms.map((b) => <option key={b.id} value={b.id}>{b.product.name} (v{b.version})</option>)}</Select></Field>
+                            <option value="">Select…</option>{boms.map((b) => <option key={b.id} value={b.id}>{(b.product as any).label ?? b.product.name} (v{b.version})</option>)}</Select></Field>
                         <Field label="Units produced" error={e.quantity}><Input type="number" min="1" value={f.data.quantity} onChange={(x) => f.setData('quantity', x.target.value)} required /></Field>
                         {bom && (
                             <div className="rounded-lg bg-slate-50 p-3 text-sm">
@@ -47,7 +47,7 @@ export default function Manufacturing({ boms, orders }: PageProps<{ boms: Bom[];
                         <table className="min-w-full divide-y divide-slate-100">
                             <thead><tr><th className={th}>Run</th><th className={th}>Product</th><th className={`${th} text-right`}>Units</th><th className={th}>Status</th><th className={th}>When</th></tr></thead>
                             <tbody className="divide-y divide-slate-100">{orders.map((o) => (
-                                <tr key={o.id}><td className={td}>#{o.id}</td><td className={td}>{o.bom.product.name} <span className="text-xs text-slate-400">v{o.bom.version}</span></td>
+                                <tr key={o.id}><td className={td}>#{o.id}</td><td className={td}>{(o.bom.product as any).label ?? o.bom.product.name} <span className="text-xs text-slate-400">v{o.bom.version}</span></td>
                                     <td className={`${td} text-right tabular-nums`}>{num(o.quantity)}</td><td className={td}><StatusBadge status={o.status} /></td><td className={`${td} text-slate-500`}>{dateTime(o.completed_at)}</td></tr>
                             ))}</tbody>
                         </table>

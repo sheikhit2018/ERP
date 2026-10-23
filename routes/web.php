@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Web\{BomController, DashboardController, ManufacturingPageController, ProductController,
+use App\Http\Controllers\Web\{StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
     RawMaterialController, ReturnPageController, SalesOrderController, StockLedgerController, TeamController};
 use App\Http\Controllers\CourierReturnController;
 use Illuminate\Support\Facades\Route;
@@ -15,11 +15,17 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
     Route::middleware('tenant.role:sales,warehouse,manufacturer')->group(function () {
         Route::get('/products', [ProductController::class, 'index'])->name('products.index');
         Route::get('/stock-ledger', StockLedgerController::class)->name('stock.ledger');
+        Route::get('/scan/lookup', [StockInController::class, 'lookup'])->name('scan.lookup');
+        Route::get('/labels', [ProductController::class, 'labels'])->name('products.labels');
     });
     Route::middleware('tenant.role:warehouse')->group(function () {
         Route::post('/products', [ProductController::class, 'store'])->name('products.store');
         Route::put('/products/{product}', [ProductController::class, 'update'])->whereNumber('product')->name('products.update');
         Route::post('/products/{product}/adjust', [ProductController::class, 'adjust'])->whereNumber('product')->name('products.adjust');
+        Route::post('/products/{product}/barcode', [ProductController::class, 'barcode'])->whereNumber('product')->name('products.barcode');
+        Route::post('/styles/{style}/variants', [ProductController::class, 'addVariants'])->whereNumber('style')->name('styles.variants');
+        Route::get('/stock-in', [StockInController::class, 'index'])->name('stockin.index');
+        Route::post('/stock-in', [StockInController::class, 'store'])->name('stockin.store');
     });
 
     Route::middleware('tenant.role:manufacturer,warehouse')->group(function () {
@@ -50,6 +56,7 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
     });
 
     Route::middleware('tenant.role:qc,warehouse')->group(function () {
+        Route::get('/returns/lookup', [StockInController::class, 'lookup'])->name('returns.lookup');
         Route::get('/returns', ReturnPageController::class)->name('returns.index');
         // JSON endpoints used by the barcode QC panel (session + CSRF protected).
         Route::post('/returns/scan', [CourierReturnController::class, 'scan'])->name('returns.scan');

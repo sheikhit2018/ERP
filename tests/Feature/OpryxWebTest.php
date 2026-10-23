@@ -59,7 +59,9 @@ class OpryxWebTest extends TestCase {
 
         $this->get_("/orders/$oid")->assertOk();
         $this->get_('/orders?q=01711111111')->assertOk();
-        $this->post_("/orders/$oid/handover", ['courier' => 'steadfast', 'tracking_id' => 'SF123'])->assertSessionHasNoErrors();
+        $this->post_("/orders/$oid/handover", ['courier' => 'steadfast', 'tracking_id' => 'SF123'])->assertSessionHasErrors('scans');
+        $this->post_("/orders/$oid/handover", ['courier' => 'steadfast', 'tracking_id' => 'SF123', 'scans' => [['product_id' => $pid, 'quantity' => 2]]])->assertSessionHasErrors('inventory');
+        $this->post_("/orders/$oid/handover", ['courier' => 'steadfast', 'tracking_id' => 'SF123', 'scans' => [['product_id' => $pid, 'quantity' => 3]]])->assertSessionHasNoErrors();
 
         $scan = $this->postJson($this->base.'/returns/scan', ['courier_tracking_id' => 'SF123'])->assertOk();
         $this->postJson($this->base.'/returns/'.$scan->json('id').'/qc', ['decision' => 'QC_PASSED'])->assertOk()->assertJsonPath('status', 'passed');
@@ -92,5 +94,59 @@ class OpryxWebTest extends TestCase {
         $this->get_('/orders')->assertOk();
         $this->get_('/manufacturing')->assertForbidden();
         $this->get_('/team')->assertForbidden();
+    }
+
+    public function test_colour_size_variants_barcodes_and_scanned_stock_flow(): void {
+        $this->actingAs($this->owner);
+        $this->post_('/products', ['code' => 'polo', 'name' => 'Polo T-Shirt', 'price_minor' => 65000,
+            'colors' => ['White', 'Black', 'white'], 'sizes' => ['S', 'M', 'L']])->assertSessionHasNoErrors();
+        $this->assertSame(6, DB::table('products')->whereNotNull('style_id')->count()); // duplicate "white" ignored
+        $style = DB::table('product_styles')->first();
+        $this->assertSame('POLO', $style->code);
+        $barcodes = DB::table('products')->pluck('barcode')->push($style->barcode);
+        $this->assertSame($barcodes->count(), $barcodes->unique()->count());
+        $this->assertTrue($barcodes->every(fn ($b) => strlen($b) === 13));
+
+        // Add colour / add size
+        $this->post_("/styles/{$style->id}/variants", ['colors' => ['Navy'], 'sizes' => ['S', 'M', 'L']])->assertSessionHasNoErrors();
+        $this->post_("/styles/{$style->id}/variants", ['colors' => ['White', 'Black', 'Navy'], 'sizes' => ['XL']])->assertSessionHasNoErrors();
+        $this->assertSame(12, DB::table('products')->where('style_id', $style->id)->count());
+
+        // Lookup by style barcode returns the grid; by variant barcode marks it.
+        $grid = $this->getJson($this->base.'/scan/lookup?code='.$style->barcode)->assertOk();
+        $this->assertCount(12, $grid->json('variants'));
+        $whiteM = DB::table('products')->where('color', 'White')->where('size', 'M')->first();
+        $this->getJson($this->base.'/scan/lookup?code='.$whiteM->barcode)->assertOk()->assertJsonPath('matched_id', $whiteM->id);
+        $this->getJson($this->base.'/scan/lookup?code=000')->assertNotFound();
+
+        // Scanned stock in: White S/M/L 1000/1100/1200, idempotent.
+        $ids = DB::table('products')->where('color', 'White')->whereIn('size', ['S', 'M', 'L'])->pluck('id', 'size');
+        $key = (string) Str::uuid();
+        $in = ['idempotency_key' => $key, 'reason' => 'purchase', 'lines' => [
+            ['product_id' => $ids['S'], 'quantity' => 1000], ['product_id' => $ids['M'], 'quantity' => 1100], ['product_id' => $ids['L'], 'quantity' => 1200]]];
+        $this->post_('/stock-in', $in)->assertSessionHasNoErrors();
+        $this->post_('/stock-in', $in)->assertSessionHasNoErrors();
+        $this->assertSame(1, DB::table('stock_receipts')->count());
+        $this->assertSame(1100, (int) DB::table('finished_good_stocks')->where('product_id', $ids['M'])->value('available_stock'));
+        $this->assertSame(3, DB::table('inventory_movements')->where('reason', 'stock_in_purchase')->count());
+
+        // Order 2 x White/M, scan-verified dispatch and scan-verified return.
+        $this->post_('/orders', ['idempotency_key' => (string) Str::uuid(), 'status' => 'confirmed',
+            'customer' => ['name' => 'Karim', 'phone' => '01811111111', 'address' => 'Uttara'],
+            'items' => [['product_id' => $ids['M'], 'quantity' => 2, 'unit_price_minor' => 65000]]])->assertRedirect();
+        $oid = DB::table('sales_orders')->value('id');
+        $this->post_("/orders/$oid/handover", ['courier' => 'pathao', 'tracking_id' => 'PT-1', 'scans' => [['product_id' => $ids['S'], 'quantity' => 2]]])->assertSessionHasErrors('inventory');
+        $this->post_("/orders/$oid/handover", ['courier' => 'pathao', 'tracking_id' => 'PT-1', 'scans' => [['product_id' => $ids['M'], 'quantity' => 1], ['product_id' => $ids['M'], 'quantity' => 1]]])->assertSessionHasNoErrors();
+        $this->assertSame(1098, (int) DB::table('finished_good_stocks')->where('product_id', $ids['M'])->value('available_stock'));
+        $rid = $this->postJson($this->base.'/returns/scan', ['courier_tracking_id' => 'PT-1'])->assertOk()->json('id');
+        $this->postJson($this->base."/returns/$rid/qc", ['decision' => 'QC_PASSED', 'scans' => [['product_id' => $ids['M'], 'quantity' => 1]]])->assertUnprocessable();
+        $this->postJson($this->base."/returns/$rid/qc", ['decision' => 'QC_PASSED', 'scans' => [['product_id' => $ids['M'], 'quantity' => 2]]])->assertOk();
+        $this->assertSame(1100, (int) DB::table('finished_good_stocks')->where('product_id', $ids['M'])->value('available_stock'));
+
+        // Custom barcode + label page
+        $this->post_("/products/{$ids['S']}/barcode", ['barcode' => '8901234567890'])->assertSessionHasNoErrors();
+        $this->post_("/products/{$ids['L']}/barcode", ['barcode' => '8901234567890'])->assertSessionHasErrors('inventory');
+        $this->get_('/labels?style='.$style->id)->assertOk();
+        $this->get_('/stock-in')->assertOk();
     }
 }

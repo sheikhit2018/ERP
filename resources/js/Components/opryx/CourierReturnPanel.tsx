@@ -1,10 +1,11 @@
 import { FormEvent, useRef, useState } from "react";
+import ScanChecklist, { useScanChecklist } from "@/Components/ScanChecklist";
 
 type ReturnRecord = {
   id: number; status: "pending" | "passed" | "damaged";
   shipment: { courier: string; tracking_id: string; order: {
     id: number; status: string; customer: { name: string; phone: string; address: string };
-    items: { id: number; quantity: number; product: { sku: string; name: string } }[];
+    items: { id: number; quantity: number; product: { id: number; sku: string; name: string; label?: string; barcode: string | null } }[];
   }};
 };
 // api must be your authenticated JSON client. It must throw on non-2xx responses.
@@ -30,7 +31,7 @@ export default function CourierReturnPanel({ api, courier, onDone }: Props) {
     const id = tracking.trim();
     if (!id) return;
     await run(async () => {
-      setRecord(null);
+      setRecord(null); check.setScanned({});
       const result = await api<ReturnRecord>("/returns/scan", { courier_tracking_id: id, ...(courier ? { courier } : {}) });
       setRecord(result); setTracking(""); onDone?.();
       setMessage(result.status === "pending" ? "Return received. Inspect every item before approving." : "This return has already been reviewed.");
@@ -40,13 +41,16 @@ export default function CourierReturnPanel({ api, courier, onDone }: Props) {
     if (!record || record.status !== "pending") return;
     const id = record.id;
     await run(async () => {
-      const result = await api<ReturnRecord>(`/returns/${id}/qc`, { decision });
+      const result = await api<ReturnRecord>(`/returns/${id}/qc`, { decision, scans: check.scans });
       setRecord(result);
       onDone?.();
       setMessage(result.status === "passed" ? "QC passed. Products restored to available stock." : "Marked damaged. Products were not added to available stock.");
     });
   }
   const order = record?.shipment.order;
+  // Every returned piece must be scanned before QC (catches missing or swapped items in the parcel).
+  const checkItems = (order?.items ?? []).map(i => ({ product_id: i.product.id, label: i.product.label ?? i.product.name, sku: i.product.sku, barcode: i.product.barcode, quantity: i.quantity }));
+  const check = useScanChecklist(checkItems);
   return (
     <section className="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm" aria-busy={busy}>
       <header><h2 className="text-lg font-semibold text-slate-900">Scan returned parcel</h2>
@@ -72,12 +76,16 @@ export default function CourierReturnPanel({ api, courier, onDone }: Props) {
         </div>
         <div className="overflow-x-auto"><table className="w-full text-left text-sm">
           <thead className="border-b text-slate-500"><tr><th className="py-3">Product</th><th>SKU</th><th className="text-right">Qty</th></tr></thead>
-          <tbody>{order.items.map(i => <tr key={i.id} className="border-b border-slate-100"><td className="py-3 font-medium">{i.product.name}</td><td>{i.product.sku}</td><td className="text-right">{i.quantity}</td></tr>)}</tbody>
+          <tbody>{order.items.map(i => <tr key={i.id} className="border-b border-slate-100"><td className="py-3 font-medium">{i.product.label ?? i.product.name}</td><td>{i.product.sku}</td><td className="text-right">{i.quantity}</td></tr>)}</tbody>
         </table></div>
+        {record.status === "pending" && <div className="space-y-2">
+          <p className="text-sm font-medium text-slate-700">Scan each returned item</p>
+          <ScanChecklist key={record.id} items={checkItems} state={check} autoFocus={false} />
+        </div>}
         <div className="flex flex-wrap gap-3">
-          <button type="button" onClick={() => review("QC_PASSED")} disabled={busy || record.status !== "pending"}
+          <button type="button" onClick={() => review("QC_PASSED")} disabled={busy || record.status !== "pending" || !check.done}
             className="rounded-lg bg-emerald-700 px-4 py-3 font-semibold text-white disabled:opacity-40">Approve Return (QC Pass)</button>
-          <button type="button" onClick={() => review("DAMAGED")} disabled={busy || record.status !== "pending"}
+          <button type="button" onClick={() => review("DAMAGED")} disabled={busy || record.status !== "pending" || !check.done}
             className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 font-semibold text-red-800 disabled:opacity-40">Damaged / Wastage</button>
         </div>
       </div>}

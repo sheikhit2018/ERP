@@ -1,108 +1,236 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Dialog from '@/Components/Modal2';
-import { Button, Card, Empty, Field, Input, PageHeader, Pagination, Select, td, th } from '@/Components/ui';
+import TagInput from '@/Components/TagInput';
+import { Button, Card, Empty, Field, Input, LinkButton, PageHeader, Pagination, Select, td, th } from '@/Components/ui';
 import { num, taka, toMinor } from '@/lib/format';
+import { lookupBarcode, uniq } from '@/lib/scan';
 import { PageProps, Paginated } from '@/types';
-import { Head, router, useForm } from '@inertiajs/react';
-import { FormEvent, useState } from 'react';
+import { Head, Link, router, useForm } from '@inertiajs/react';
+import { FormEvent, useMemo, useState } from 'react';
 
+type Stock = { available_stock: number; reserved_stock: number; transit_stock: number; damaged_stock: number };
 type Product = {
-    id: number; sku: string; name: string; base_unit: string; price_minor: number; cost_minor: number; low_stock_level: number; active: boolean;
-    stock: { available_stock: number; reserved_stock: number; transit_stock: number; damaged_stock: number; on_hand_stock: number } | null;
+    id: number; sku: string; name: string; label: string; color: string | null; size: string | null; barcode: string | null; style_id: number | null;
+    price_minor: number; cost_minor: number; low_stock_level: number; active: boolean; stock: Stock | null;
 };
+type Style = { id: number; code: string; name: string; barcode: string | null };
+
+const SIZE_SUGGEST = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
+const COLOR_SUGGEST = ['White', 'Black', 'Navy', 'Grey', 'Red', 'Maroon', 'Olive', 'Sky Blue'];
 
 function CreateForm({ onDone }: { onDone: () => void }) {
-    const f = useForm({ sku: '', name: '', price: '', cost: '', low_stock_level: '5', opening_stock: '0' });
-    const submit = (e: FormEvent) => {
-        e.preventDefault();
-        f.transform((d) => ({ sku: d.sku.trim(), name: d.name.trim(), price_minor: toMinor(d.price), cost_minor: toMinor(d.cost),
-            low_stock_level: parseInt(d.low_stock_level) || 0, opening_stock: parseInt(d.opening_stock) || 0 }));
-        f.post('/products', { preserveScroll: true, onSuccess: () => { f.reset(); onDone(); } });
-    };
+    const [colors, setColors] = useState<string[]>([]);
+    const [sizes, setSizes] = useState<string[]>(['S', 'M', 'L', 'XL']);
+    const f = useForm({ code: '', name: '', price: '', cost: '', low: '10', barcode: '' });
     const e = f.errors as Record<string, string>;
-    return (
-        <form onSubmit={submit} className="grid grid-cols-2 gap-4">
-            <Field label="SKU / code" error={e.sku} hint="Letters, numbers, - . _"><Input value={f.data.sku} onChange={(x) => f.setData('sku', x.target.value)} required autoFocus /></Field>
-            <Field label="Product name" error={e.name}><Input value={f.data.name} onChange={(x) => f.setData('name', x.target.value)} required /></Field>
-            <Field label="Sale price (৳)" error={e.price_minor}><Input type="number" step="0.01" min="0" value={f.data.price} onChange={(x) => f.setData('price', x.target.value)} required /></Field>
-            <Field label="Cost price (৳)" error={e.cost_minor}><Input type="number" step="0.01" min="0" value={f.data.cost} onChange={(x) => f.setData('cost', x.target.value)} /></Field>
-            <Field label="Low-stock alert at" error={e.low_stock_level}><Input type="number" min="0" value={f.data.low_stock_level} onChange={(x) => f.setData('low_stock_level', x.target.value)} /></Field>
-            <Field label="Opening stock" error={e.opening_stock}><Input type="number" min="0" value={f.data.opening_stock} onChange={(x) => f.setData('opening_stock', x.target.value)} /></Field>
-            {e.inventory && <p className="col-span-2 text-sm text-rose-600">{e.inventory}</p>}
-            <div className="col-span-2 flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onDone}>Cancel</Button><Button disabled={f.processing}>Save product</Button></div>
-        </form>
-    );
-}
-
-function AdjustForm({ product, onDone }: { product: Product; onDone: () => void }) {
-    const f = useForm({ direction: 'in', qty: '', reason: 'purchase', note: '' });
-    const submit = (e: FormEvent) => {
-        e.preventDefault();
-        f.transform((d) => ({ delta: (d.direction === 'in' ? 1 : -1) * (parseInt(d.qty) || 0), reason: d.reason, note: d.note }));
-        f.post(`/products/${product.id}/adjust`, { preserveScroll: true, onSuccess: onDone });
+    const [exists, setExists] = useState<string | null>(null);
+    // Scanning a barcode that is already in Opryx shows that product instead of creating a duplicate.
+    const checkBarcode = async () => {
+        const code = f.data.barcode.trim(); setExists(null); if (!code) return;
+        try {
+            const r = await lookupBarcode(code);
+            const v = r.variants.find((x) => x.id === r.matched_id) ?? r.variants[0];
+            setExists(`Already in Opryx: ${r.style?.name ?? v.label} (${r.style?.code ?? v.sku}) · ৳${(v.price_minor / 100).toLocaleString()}`);
+            if (!f.data.name) f.setData((d) => ({ ...d, name: r.style?.name ?? v.name, code: r.style?.code ?? v.sku, price: String(v.price_minor / 100) }));
+        } catch { /* new barcode: will be used as this product's style barcode */ }
     };
-    const e = f.errors as Record<string, string>;
+    const submit = (ev: FormEvent) => {
+        ev.preventDefault();
+        f.transform((d) => ({ code: d.code.trim(), name: d.name.trim(), price_minor: toMinor(d.price), cost_minor: toMinor(d.cost),
+            low_stock_level: parseInt(d.low) || 0, colors, sizes, barcode: d.barcode.trim() || null }));
+        f.post('/products', { preserveScroll: true, onSuccess: () => { f.reset(); setColors([]); onDone(); } });
+    };
     return (
         <form onSubmit={submit} className="space-y-4">
-            <p className="text-sm text-slate-500">{product.name} — available now: <b>{num(product.stock?.available_stock)}</b></p>
+            <Field label="Barcode (optional — scan if the product already has one)" error={e.barcode}>
+                <Input value={f.data.barcode} onChange={(x) => { f.setData('barcode', x.target.value); setExists(null); }} onBlur={checkBarcode}
+                    onKeyDown={(x) => { if (x.key === 'Enter') { x.preventDefault(); checkBarcode(); } }} placeholder="Leave empty to generate barcodes automatically" autoComplete="off" />
+            </Field>
+            {exists && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">{exists}. Use “+ Add colour / size” on that product instead of creating it again.</p>}
             <div className="grid grid-cols-2 gap-4">
-                <Field label="Type"><Select value={f.data.direction} onChange={(x) => f.setData('direction', x.target.value)}><option value="in">Stock in (+)</option><option value="out">Stock out (−)</option></Select></Field>
-                <Field label="Quantity" error={e.delta}><Input type="number" min="1" value={f.data.qty} onChange={(x) => f.setData('qty', x.target.value)} required autoFocus /></Field>
-                <Field label="Reason" error={e.reason}><Select value={f.data.reason} onChange={(x) => f.setData('reason', x.target.value)}>
-                    <option value="purchase">Purchase / supplier receipt</option><option value="recount">Physical recount</option>
-                    <option value="damage_writeoff">Damage / write-off</option><option value="opening">Opening stock</option><option value="other">Other</option></Select></Field>
-                <Field label="Note (optional)"><Input maxLength={60} value={f.data.note} onChange={(x) => f.setData('note', x.target.value)} /></Field>
+                <Field label="Product name" error={e.name}><Input value={f.data.name} onChange={(x) => f.setData('name', x.target.value)} placeholder="Polo T-Shirt" required /></Field>
+                <Field label="Style code" error={e.code} hint="Short, e.g. POLO01"><Input value={f.data.code} onChange={(x) => f.setData('code', x.target.value.toUpperCase())} required /></Field>
+                <Field label="Sale price (৳)" error={e.price_minor}><Input type="number" step="0.01" min="0" value={f.data.price} onChange={(x) => f.setData('price', x.target.value)} required /></Field>
+                <Field label="Cost price (৳)" error={e.cost_minor}><Input type="number" step="0.01" min="0" value={f.data.cost} onChange={(x) => f.setData('cost', x.target.value)} /></Field>
             </div>
+            <Field label="Colours" error={e.colors}><TagInput value={colors} onChange={setColors} addLabel="Add colour" placeholder="Type a colour, press Enter" suggestions={COLOR_SUGGEST} /></Field>
+            <Field label="Sizes" error={e.sizes}><TagInput value={sizes} onChange={setSizes} addLabel="Add size" placeholder="Type a size, press Enter" suggestions={SIZE_SUGGEST} /></Field>
+            <Field label="Low-stock alert at (per variant)"><Input type="number" min="0" value={f.data.low} onChange={(x) => f.setData('low', x.target.value)} className="max-w-[140px]" /></Field>
+            <p className="rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-900">
+                {colors.length && sizes.length ? <>Creates <b>{colors.length * sizes.length} variants</b> ({colors.length} colours × {sizes.length} sizes), each with its own barcode.</> : 'Add at least one colour and one size.'}
+            </p>
             {e.inventory && <p className="text-sm text-rose-600">{e.inventory}</p>}
-            <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onDone}>Cancel</Button><Button disabled={f.processing}>Update stock</Button></div>
+            <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onDone}>Cancel</Button>
+                <Button disabled={f.processing || !colors.length || !sizes.length || !!exists}>Create product</Button></div>
         </form>
     );
 }
 
-export default function Products({ products, q, role }: PageProps<{ products: Paginated<Product>; q: string }>) {
+function AddVariantsForm({ style, mode, colors, sizes, onDone }: { style: Style; mode: 'colour' | 'size'; colors: string[]; sizes: string[]; onDone: () => void }) {
+    const [items, setItems] = useState<string[]>([]);
+    const f = useForm({});
+    const e = f.errors as Record<string, string>;
+    const submit = (ev: FormEvent) => {
+        ev.preventDefault();
+        f.transform(() => mode === 'colour' ? { colors: items, sizes } : { colors, sizes: items });
+        f.post(`/styles/${style.id}/variants`, { preserveScroll: true, onSuccess: onDone });
+    };
+    const other = mode === 'colour' ? sizes : colors;
+    return (
+        <form onSubmit={submit} className="space-y-4">
+            <TagInput value={items} onChange={setItems} addLabel={mode === 'colour' ? 'Add colour' : 'Add size'}
+                placeholder={mode === 'colour' ? 'New colour, press Enter' : 'New size, press Enter'}
+                suggestions={(mode === 'colour' ? COLOR_SUGGEST : SIZE_SUGGEST).filter((s) => !(mode === 'colour' ? colors : sizes).includes(s))} />
+            <p className="text-sm text-slate-600">Each new {mode} is created in all {other.length} existing {mode === 'colour' ? 'sizes' : 'colours'} ({other.join(', ')}) = <b>{items.length * other.length}</b> new variants with barcodes.</p>
+            {(e.inventory || e.colors || e.sizes) && <p className="text-sm text-rose-600">{e.inventory || e.colors || e.sizes}</p>}
+            <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onDone}>Cancel</Button><Button disabled={f.processing || !items.length}>Add</Button></div>
+        </form>
+    );
+}
+
+function VariantDialog({ p, canEdit, onDone }: { p: Product; canEdit: boolean; onDone: () => void }) {
+    const adj = useForm({ direction: 'out', qty: '', reason: 'damage_writeoff', note: '' });
+    const bc = useForm({ barcode: p.barcode ?? '' });
+    const ae = adj.errors as Record<string, string>, be = bc.errors as Record<string, string>;
+    const s = p.stock;
+    return (
+        <div className="space-y-5">
+            <div className="grid grid-cols-4 gap-2 text-center">
+                {[['Available', s?.available_stock, 'text-brand-700'], ['Reserved', s?.reserved_stock, 'text-sky-700'], ['Transit', s?.transit_stock, 'text-violet-700'], ['Damaged', s?.damaged_stock, 'text-rose-600']].map(([k, v, c]) => (
+                    <div key={k as string} className="rounded-lg bg-slate-50 py-2"><div className={`text-lg font-semibold tabular-nums ${c}`}>{num(v as number)}</div><div className="text-xs text-slate-500">{k}</div></div>
+                ))}
+            </div>
+            <div className="text-sm text-slate-600">SKU <span className="font-mono">{p.sku}</span> · Barcode <span className="font-mono">{p.barcode}</span> ·{' '}
+                <Link className="text-brand-700" href={`/labels?ids=${p.id}`}>Print label</Link></div>
+            {canEdit && (
+                <form className="flex items-end gap-2" onSubmit={(ev) => { ev.preventDefault(); bc.post(`/products/${p.id}/barcode`, { preserveScroll: true, onSuccess: onDone }); }}>
+                    <div className="flex-1"><Field label="Use your own barcode (optional)" error={be.barcode || be.inventory}><Input value={bc.data.barcode} onChange={(x) => bc.setData('barcode', x.target.value)} /></Field></div>
+                    <Button variant="secondary" disabled={bc.processing}>Save</Button>
+                </form>
+            )}
+            {canEdit && (
+                <form className="space-y-3 border-t border-slate-100 pt-4" onSubmit={(ev) => {
+                    ev.preventDefault();
+                    adj.transform((d) => ({ delta: (d.direction === 'in' ? 1 : -1) * (parseInt(d.qty) || 0), reason: d.reason, note: d.note }));
+                    adj.post(`/products/${p.id}/adjust`, { preserveScroll: true, onSuccess: onDone });
+                }}>
+                    <div className="text-sm font-medium text-slate-700">Manual correction <span className="font-normal text-slate-400">(normal receiving → Stock In scan)</span></div>
+                    <div className="grid grid-cols-3 gap-2">
+                        <Select value={adj.data.direction} onChange={(x) => adj.setData('direction', x.target.value)}><option value="out">Out (−)</option><option value="in">In (+)</option></Select>
+                        <Input type="number" min="1" placeholder="Qty" value={adj.data.qty} onChange={(x) => adj.setData('qty', x.target.value)} required />
+                        <Select value={adj.data.reason} onChange={(x) => adj.setData('reason', x.target.value)}>
+                            <option value="damage_writeoff">Damage / loss</option><option value="recount">Recount</option><option value="other">Other</option></Select>
+                    </div>
+                    {(ae.delta || ae.inventory) && <p className="text-sm text-rose-600">{ae.delta || ae.inventory}</p>}
+                    <div className="flex justify-end"><Button variant="secondary" disabled={adj.processing}>Apply correction</Button></div>
+                </form>
+            )}
+        </div>
+    );
+}
+
+function StyleCard({ style, items, canEdit, onOpen, onAdd }: { style: Style; items: Product[]; canEdit: boolean; onOpen: (p: Product) => void; onAdd: (m: 'colour' | 'size') => void }) {
+    const colors = uniq(items.map((i) => i.color)), sizes = uniq(items.map((i) => i.size));
+    const cell = (c: string, s: string) => items.find((i) => i.color === c && i.size === s);
+    const total = items.reduce((a, i) => a + (i.stock?.available_stock ?? 0), 0);
+    return (
+        <Card className="mb-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
+                <div>
+                    <div className="font-semibold text-slate-900">{style.name} <span className="ml-1 text-xs font-normal text-slate-400">{style.code}</span></div>
+                    <div className="text-xs text-slate-500">{taka(items[0]?.price_minor)} · {colors.length} colours × {sizes.length} sizes · <b className="text-slate-700">{num(total)}</b> available · style barcode <span className="font-mono">{style.barcode}</span></div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {canEdit && <Button variant="secondary" onClick={() => onAdd('colour')}>+ Add colour</Button>}
+                    {canEdit && <Button variant="secondary" onClick={() => onAdd('size')}>+ Add size</Button>}
+                    <LinkButton variant="secondary" href={`/labels?style=${style.id}`}>Print labels</LinkButton>
+                </div>
+            </div>
+            <div className="overflow-x-auto">
+                <table className="min-w-full">
+                    <thead><tr><th className={th}>Colour</th>{sizes.map((s) => <th key={s} className={`${th} text-center`}>{s}</th>)}<th className={`${th} text-right`}>Total</th></tr></thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {colors.map((c) => (
+                            <tr key={c}>
+                                <td className={`${td} font-medium`}>{c}</td>
+                                {sizes.map((s) => {
+                                    const v = cell(c, s);
+                                    if (!v) return <td key={s} className={`${td} text-center text-slate-300`}>—</td>;
+                                    const a = v.stock?.available_stock ?? 0, low = a <= v.low_stock_level;
+                                    return (
+                                        <td key={s} className="px-1.5 py-1.5 text-center">
+                                            <button onClick={() => onOpen(v)} title={`${v.barcode}`}
+                                                className={`w-full min-w-[64px] rounded-lg px-2 py-1.5 tabular-nums ring-1 ring-inset transition hover:ring-brand-400 ${low ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-white text-slate-900 ring-slate-200'}`}>
+                                                <div className="text-sm font-semibold">{num(a)}</div>
+                                                {(v.stock?.reserved_stock ?? 0) > 0 && <div className="text-[10px] text-sky-700">{num(v.stock?.reserved_stock)} reserved</div>}
+                                            </button>
+                                        </td>
+                                    );
+                                })}
+                                <td className={`${td} text-right font-semibold tabular-nums`}>{num(items.filter((i) => i.color === c).reduce((a, i) => a + (i.stock?.available_stock ?? 0), 0))}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </Card>
+    );
+}
+
+export default function Products({ products, styles, q, role }: PageProps<{ products: Paginated<Product>; styles: Record<string, Style>; q: string }>) {
     const [creating, setCreating] = useState(false);
-    const [adjusting, setAdjusting] = useState<Product | null>(null);
+    const [open, setOpen] = useState<Product | null>(null);
+    const [adding, setAdding] = useState<{ style: Style; mode: 'colour' | 'size' } | null>(null);
     const [search, setSearch] = useState(q);
     const canEdit = role === 'owner' || role === 'manager' || role === 'warehouse';
+    const groups = useMemo(() => {
+        const m = new Map<number, Product[]>();
+        for (const p of products.data) if (p.style_id) m.set(p.style_id, [...(m.get(p.style_id) ?? []), p]);
+        return m;
+    }, [products.data]);
+    const plain = products.data.filter((p) => !p.style_id);
+    const addingItems = adding ? groups.get(adding.style.id) ?? [] : [];
+
     return (
         <AuthenticatedLayout>
             <Head title="Products & stock" />
-            <PageHeader title="Products & stock" subtitle="Available = sellable now. Reserved = held for confirmed/pending orders. Transit = with courier."
-                actions={canEdit ? <Button onClick={() => setCreating(true)}>+ Add product</Button> : undefined} />
-            <Card>
-                <form className="flex gap-2 border-b border-slate-100 p-4" onSubmit={(e) => { e.preventDefault(); router.get('/products', { q: search }, { preserveState: true }); }}>
-                    <Input placeholder="Search by name or SKU" value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-sm" />
-                    <Button variant="secondary">Search</Button>
-                </form>
-                {products.data.length === 0 ? <Empty>No products yet. Add your first product to start taking orders.</Empty> : (
+            <PageHeader title="Products & stock" subtitle="Numbers show available (sellable) stock per colour and size. Click a cell for barcode, reserved and transit."
+                actions={<>{canEdit && <LinkButton variant="secondary" href="/stock-in">Stock In (scan)</LinkButton>}{canEdit && <Button onClick={() => setCreating(true)}>+ Add product</Button>}</>} />
+            <form className="mb-5 flex gap-2" onSubmit={(e) => { e.preventDefault(); router.get('/products', { q: search }, { preserveState: true }); }}>
+                <Input placeholder="Search name, SKU, colour or scan a barcode" value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-md bg-white" />
+                <Button variant="secondary">Search</Button>
+            </form>
+
+            {products.data.length === 0 && <Card><Empty>No products yet. Add your first product with its colours and sizes.</Empty></Card>}
+            {[...groups.entries()].map(([sid, items]) => styles[sid] && (
+                <StyleCard key={sid} style={styles[sid]} items={items} canEdit={canEdit} onOpen={setOpen} onAdd={(mode) => setAdding({ style: styles[sid], mode })} />
+            ))}
+
+            {plain.length > 0 && (
+                <Card title="Products without colour / size">
                     <div className="overflow-x-auto"><table className="min-w-full divide-y divide-slate-100">
-                        <thead className="bg-slate-50/60"><tr>
-                            <th className={th}>Product</th><th className={th}>Price</th>
-                            <th className={`${th} text-right`}>Available</th><th className={`${th} text-right`}>Reserved</th>
-                            <th className={`${th} text-right`}>Transit</th><th className={`${th} text-right`}>Damaged</th><th className={th}></th>
-                        </tr></thead>
+                        <thead><tr><th className={th}>Product</th><th className={th}>Barcode</th><th className={th}>Price</th><th className={`${th} text-right`}>Available</th><th className={`${th} text-right`}>Reserved</th><th className={`${th} text-right`}>Transit</th></tr></thead>
                         <tbody className="divide-y divide-slate-100">
-                            {products.data.map((p) => {
-                                const low = (p.stock?.available_stock ?? 0) <= p.low_stock_level;
-                                return (
-                                    <tr key={p.id} className={p.active ? '' : 'opacity-50'}>
-                                        <td className={td}><div className="font-medium text-slate-900">{p.name}</div><div className="text-xs text-slate-500">{p.sku}</div></td>
-                                        <td className={td}>{taka(p.price_minor)}</td>
-                                        <td className={`${td} text-right font-semibold tabular-nums ${low ? 'text-rose-600' : 'text-slate-900'}`}>{num(p.stock?.available_stock)}</td>
-                                        <td className={`${td} text-right tabular-nums`}>{num(p.stock?.reserved_stock)}</td>
-                                        <td className={`${td} text-right tabular-nums`}>{num(p.stock?.transit_stock)}</td>
-                                        <td className={`${td} text-right tabular-nums text-slate-400`}>{num(p.stock?.damaged_stock)}</td>
-                                        <td className={`${td} text-right`}>{canEdit && <Button variant="secondary" onClick={() => setAdjusting(p)}>Adjust</Button>}</td>
-                                    </tr>
-                                );
-                            })}
+                            {plain.map((p) => (
+                                <tr key={p.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setOpen(p)}>
+                                    <td className={td}><div className="font-medium">{p.name}</div><div className="text-xs text-slate-500">{p.sku}</div></td>
+                                    <td className={`${td} font-mono text-xs`}>{p.barcode}</td><td className={td}>{taka(p.price_minor)}</td>
+                                    <td className={`${td} text-right font-semibold tabular-nums`}>{num(p.stock?.available_stock)}</td>
+                                    <td className={`${td} text-right tabular-nums`}>{num(p.stock?.reserved_stock)}</td>
+                                    <td className={`${td} text-right tabular-nums`}>{num(p.stock?.transit_stock)}</td>
+                                </tr>
+                            ))}
                         </tbody>
                     </table></div>
-                )}
-                <Pagination links={products.links} />
-            </Card>
+                </Card>
+            )}
+            <Pagination links={products.links} />
+
             <Dialog show={creating} onClose={() => setCreating(false)} title="Add product"><CreateForm onDone={() => setCreating(false)} /></Dialog>
-            <Dialog show={!!adjusting} onClose={() => setAdjusting(null)} title="Adjust stock">{adjusting && <AdjustForm product={adjusting} onDone={() => setAdjusting(null)} />}</Dialog>
+            <Dialog show={!!open} onClose={() => setOpen(null)} title={open?.label ?? ''}>{open && <VariantDialog key={open.id} p={open} canEdit={canEdit} onDone={() => setOpen(null)} />}</Dialog>
+            <Dialog show={!!adding} onClose={() => setAdding(null)} title={adding ? `${adding.mode === 'colour' ? 'Add colour' : 'Add size'} — ${adding.style.name}` : ''}>
+                {adding && <AddVariantsForm style={adding.style} mode={adding.mode} colors={uniq(addingItems.map((i) => i.color))} sizes={uniq(addingItems.map((i) => i.size))} onDone={() => setAdding(null)} />}
+            </Dialog>
         </AuthenticatedLayout>
     );
 }

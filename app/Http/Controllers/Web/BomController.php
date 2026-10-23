@@ -10,8 +10,8 @@ use Inertia\Inertia;
 class BomController extends Controller {
     public function index() {
         return Inertia::render('Boms/Index', [
-            'boms' => Bom::with(['product:id,sku,name', 'items.material:id,sku,name,base_unit'])->orderByDesc('active')->latest('id')->get(),
-            'products' => Product::where('active', true)->orderBy('name')->get(['id', 'sku', 'name']),
+            'boms' => Bom::with(['product:id,sku,name,color,size', 'items.material:id,sku,name,base_unit'])->orderByDesc('active')->latest('id')->get(),
+            'products' => Product::where('active', true)->orderBy('name')->orderBy('id')->get(['id', 'sku', 'name', 'color', 'size']),
             'materials' => RawMaterial::orderBy('name')->get(['id', 'sku', 'name', 'base_unit']),
         ]);
     }

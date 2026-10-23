@@ -25,4 +25,5 @@ export type PageProps<
     role: Role | null;
     flash: { success?: string | null; error?: string | null };
     appName: string;
+    errors: Record<string, string>;
 };

@@ -21,7 +21,9 @@ Live (first tenant): https://erp.sheikhit.com.bd · Future SaaS domain: opryx.ap
 | Dashboard | `/dashboard` | all |
 | Orders (list / new / detail, confirm, cancel, handover, delivered) | `/orders` | sales, warehouse |
 | Returns & QC (barcode scan, pass / damaged) | `/returns` | qc, warehouse |
-| Products & stock (+ stock adjust) | `/products` | sales, warehouse, manufacturer |
+| Products & stock — colour × size grid, + Add colour / + Add size | `/products` | sales, warehouse, manufacturer |
+| Stock In (scan) — scan style barcode, type qty per colour/size | `/stock-in` | warehouse |
+| Barcode labels (EAN-13, 50×30 / 38×25 mm) | `/labels` | sales, warehouse, manufacturer |
 | Stock ledger | `/stock-ledger` | sales, warehouse, manufacturer |
 | Raw materials | `/raw-materials` | manufacturer, warehouse |
 | BOM / recipes | `/boms` | manufacturer |
@@ -30,6 +32,13 @@ Live (first tenant): https://erp.sheikhit.com.bd · Future SaaS domain: opryx.ap
 
 `owner` can do everything; `manager` everything except Team.
 A JSON API for integrations lives under `/api` (see `routes/opryx.php`).
+
+## Barcodes
+
+Every variant (style + colour + size) gets its own EAN-13 (`2` + tenant + sequence + check digit);
+the style gets one too. Custom manufacturer barcodes can replace generated ones.
+Courier handover and return QC require every unit to be scanned (`scans` are verified
+server-side against the order lines).
 
 ## Stock rules (the core)
 

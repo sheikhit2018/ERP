@@ -10,8 +10,8 @@ use Inertia\Inertia;
 class ManufacturingPageController extends Controller {
     public function index() {
         return Inertia::render('Manufacturing/Index', [
-            'boms' => Bom::with(['product:id,sku,name', 'items.material:id,name,base_unit', 'items.material.stock'])->where('active', true)->get(),
-            'orders' => ManufacturingOrder::with('bom.product:id,sku,name')->latest('id')->take(50)->get(),
+            'boms' => Bom::with(['product:id,sku,name,color,size', 'items.material:id,name,base_unit', 'items.material.stock'])->where('active', true)->get(),
+            'orders' => ManufacturingOrder::with('bom.product:id,sku,name,color,size')->latest('id')->take(50)->get(),
         ]);
     }
     public function store(Request $r, InventoryService $s) {

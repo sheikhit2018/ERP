@@ -15,7 +15,7 @@ class StockLedgerController extends Controller {
         $mids = $movements->pluck('raw_material_id')->filter()->unique();
         return Inertia::render('Stock/Ledger', [
             'movements' => $movements,
-            'products' => Product::whereIn('id', $pids)->pluck('name', 'id'),
+            'products' => Product::whereIn('id', $pids)->get()->pluck('label', 'id'),
             'materials' => RawMaterial::whereIn('id', $mids)->pluck('name', 'id'),
             'users' => \App\Models\User::whereIn('id', $movements->pluck('actor_id')->unique())->pluck('name', 'id'),
         ]);

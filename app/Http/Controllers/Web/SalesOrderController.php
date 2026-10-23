@@ -28,8 +28,8 @@ class SalesOrderController extends Controller {
     }
     public function create() {
         return Inertia::render('Orders/Create', [
-            'products' => Product::with('stock:id,product_id,available_stock')->where('active', true)->orderBy('name')
-                ->get(['id', 'sku', 'name', 'price_minor']),
+            'products' => Product::with('stock:id,product_id,available_stock')->where('active', true)->orderBy('name')->orderBy('id')
+                ->get(['id', 'sku', 'name', 'color', 'size', 'barcode', 'price_minor']),
         ]);
     }
     public function store(Request $r, InventoryService $s) {
@@ -62,14 +62,16 @@ class SalesOrderController extends Controller {
         return redirect()->route('orders.show', $order->id)->with('success', "Order #{$order->id} saved and stock reserved.");
     }
     public function show(int $order) {
-        $o = SalesOrder::with(['items.product:id,sku,name', 'shipment.courierReturn'])->findOrFail($order);
+        $o = SalesOrder::with(['items.product:id,sku,name,color,size,barcode', 'shipment.courierReturn'])->findOrFail($order);
         $logs = $o->shipment ? \App\Models\CourierLog::where('shipment_id', $o->shipment->id)->latest('id')->get() : [];
         return Inertia::render('Orders/Show', ['order' => $o, 'logs' => $logs]);
     }
     public function confirm(int $order, InventoryService $s) { $s->confirm($order); return back()->with('success', 'Order confirmed.'); }
     public function cancel(Request $r, int $order, InventoryService $s) { $s->cancel($order, (int) $r->user()->id); return back()->with('success', 'Order cancelled and stock released.'); }
     public function handover(Request $r, int $order, InventoryService $s) {
-        $s->handover($order, $r->only('courier', 'tracking_id'), (int) $r->user()->id);
+        // Warehouse must scan every unit before it leaves (barcode check against the order lines).
+        if (!$r->filled('scans')) throw \Illuminate\Validation\ValidationException::withMessages(['scans' => 'Scan every item before handing over to the courier.']);
+        $s->handover($order, $r->only('courier', 'tracking_id', 'scans'), (int) $r->user()->id);
         return back()->with('success', 'Handed over to courier. Stock moved to transit.');
     }
     public function delivered(Request $r, int $order, InventoryService $s) { $s->delivered($order, (int) $r->user()->id); return back()->with('success', 'Marked delivered.'); }

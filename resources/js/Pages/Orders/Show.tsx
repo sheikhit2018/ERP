@@ -4,11 +4,12 @@ import { STATUS_LABEL, dateTime, num, taka } from '@/lib/format';
 import { PageProps } from '@/types';
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { FormEvent } from 'react';
+import ScanChecklist, { useScanChecklist } from '@/Components/ScanChecklist';
 
 type Order = {
     id: number; status: string; source: string; note: string | null; created_at: string; delivery_charge_minor: number; discount_minor: number;
     customer: { name: string; phone: string; address: string };
-    items: { id: number; quantity: number; unit_price_minor: number; product: { id: number; sku: string; name: string } }[];
+    items: { id: number; quantity: number; unit_price_minor: number; product: { id: number; sku: string; name: string; label: string; barcode: string | null } }[];
     shipment: { courier: string; tracking_id: string; status: string; handed_over_at: string; courier_return: { id: number; status: string } | null } | null;
 };
 
@@ -21,7 +22,13 @@ export default function ShowOrder({ order, logs, role }: PageProps<{ order: Orde
     const isSales = ['owner', 'manager', 'sales'].includes(role ?? '');
     const isWh = ['owner', 'manager', 'warehouse'].includes(role ?? '');
     const act = (path: string, confirmText?: string) => { if (!confirmText || window.confirm(confirmText)) router.post(`/orders/${order.id}/${path}`, {}, { preserveScroll: true }); };
-    const handover = (e: FormEvent) => { e.preventDefault(); ship.post(`/orders/${order.id}/handover`, { preserveScroll: true }); };
+    const checkItems = order.items.map((i) => ({ product_id: i.product.id, label: i.product.label ?? i.product.name, sku: i.product.sku, barcode: i.product.barcode, quantity: i.quantity }));
+    const check = useScanChecklist(checkItems);
+    const handover = (e: FormEvent) => {
+        e.preventDefault(); if (!check.done) return;
+        ship.transform((d) => ({ ...d, scans: check.scans }));
+        ship.post(`/orders/${order.id}/handover`, { preserveScroll: true });
+    };
 
     return (
         <AuthenticatedLayout>
@@ -40,7 +47,7 @@ export default function ShowOrder({ order, logs, role }: PageProps<{ order: Orde
                             <thead><tr><th className={th}>Product</th><th className={`${th} text-right`}>Qty</th><th className={`${th} text-right`}>Price</th><th className={`${th} text-right`}>Amount</th></tr></thead>
                             <tbody className="divide-y divide-slate-100">
                                 {order.items.map((i) => (
-                                    <tr key={i.id}><td className={td}>{i.product.name}<div className="text-xs text-slate-500">{i.product.sku}</div></td>
+                                    <tr key={i.id}><td className={td}>{i.product.label ?? i.product.name}<div className="text-xs text-slate-500">{i.product.sku}</div></td>
                                         <td className={`${td} text-right tabular-nums`}>{num(i.quantity)}</td><td className={`${td} text-right tabular-nums`}>{taka(i.unit_price_minor)}</td>
                                         <td className={`${td} text-right font-medium tabular-nums`}>{taka(i.quantity * i.unit_price_minor)}</td></tr>
                                 ))}
@@ -80,12 +87,16 @@ export default function ShowOrder({ order, logs, role }: PageProps<{ order: Orde
                         <div className="space-y-3 p-5">
                             {order.status === 'pending' && isSales && <Button className="w-full" onClick={() => act('confirm')}>Confirm order</Button>}
                             {order.status === 'confirmed' && isWh && (
-                                <form onSubmit={handover} className="space-y-3">
+                                <form onSubmit={handover} className="space-y-3" onKeyDown={(e) => { if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') e.preventDefault(); }}>
+                                    <div className="text-sm font-medium text-slate-700">1. Scan every item into the parcel</div>
+                                    <ScanChecklist items={checkItems} state={check} />
+                                    {((ship.errors as any).scans || (ship.errors as any).inventory) && <p className="text-sm text-rose-600">{(ship.errors as any).scans || (ship.errors as any).inventory}</p>}
+                                    <div className="pt-2 text-sm font-medium text-slate-700">2. Courier</div>
                                     <Field label="Courier"><Select value={ship.data.courier} onChange={(x) => ship.setData('courier', x.target.value)}>
                                         {COURIERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select></Field>
                                     <Field label="Tracking / consignment ID" error={(ship.errors as any).tracking_id}>
                                         <Input value={ship.data.tracking_id} onChange={(x) => ship.setData('tracking_id', x.target.value)} required placeholder="Scan or type" /></Field>
-                                    <Button className="w-full" disabled={ship.processing}>Hand over to courier</Button>
+                                    <Button className="w-full" disabled={ship.processing || !check.done}>{check.done ? 'Hand over to courier (stock out)' : `Scan items first (${check.count}/${check.total})`}</Button>
                                     <p className="text-xs text-slate-500">Use this when the parcel physically leaves your warehouse. Stock moves from reserved → transit.</p>
                                 </form>
                             )}

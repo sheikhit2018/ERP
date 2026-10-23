@@ -26,7 +26,7 @@ export default function Boms({ boms, products, materials }: PageProps<{ boms: Bo
                 <Card className="lg:col-span-2" title="New recipe">
                     <form onSubmit={submit} className="space-y-4 p-5">
                         <Field label="Finished product" error={e.product_id}><Select value={f.data.product_id} onChange={(x) => f.setData('product_id', x.target.value)} required>
-                            <option value="">Select…</option>{products.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>)}</Select></Field>
+                            <option value="">Select…</option>{products.map((p) => <option key={p.id} value={p.id}>{(p as any).label ?? p.name} ({p.sku})</option>)}</Select></Field>
                         {rows.map((r, i) => (
                             <div key={i} className="grid grid-cols-12 items-end gap-2">
                                 <div className="col-span-7"><Field label={i === 0 ? 'Raw material' : ''}><Select value={r.raw_material_id} onChange={(x) => setRows((rs) => rs.map((o, j) => j === i ? { ...o, raw_material_id: x.target.value } : o))} required>
@@ -43,7 +43,7 @@ export default function Boms({ boms, products, materials }: PageProps<{ boms: Bo
                 <div className="space-y-4 lg:col-span-3">
                     {boms.length === 0 && <Card><Empty>No recipes yet.</Empty></Card>}
                     {boms.map((b) => (
-                        <Card key={b.id} title={`${b.product.name} — v${b.version}`} actions={<span className={`text-xs font-medium ${b.active ? 'text-emerald-700' : 'text-slate-400'}`}>{b.active ? 'Active' : 'Archived'}</span>}>
+                        <Card key={b.id} title={`${(b.product as any).label ?? b.product.name} — v${b.version}`} actions={<span className={`text-xs font-medium ${b.active ? 'text-emerald-700' : 'text-slate-400'}`}>{b.active ? 'Active' : 'Archived'}</span>}>
                             <ul className="divide-y divide-slate-100 text-sm">
                                 {b.items.map((i) => <li key={i.id} className="flex justify-between px-5 py-2"><span>{i.material.name}</span><span className="tabular-nums">{num(i.quantity_per_unit)} {i.material.base_unit}</span></li>)}
                             </ul>

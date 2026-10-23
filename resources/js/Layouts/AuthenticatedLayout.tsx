@@ -16,6 +16,7 @@ const I = {
     bom: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
     factory: 'M3 21V10l6 4V10l6 4V4h6v17zM7 17h2M12 17h2M17 17h2',
     ledger: 'M4 4h16v16H4zM4 9h16M9 9v11',
+    scan: 'M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M13 8v8M17 8v8',
     team: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
 };
 
@@ -27,6 +28,7 @@ const NAV: NavGroup[] = [
     ] },
     { title: 'Inventory', items: [
         { label: 'Products & stock', href: '/products', match: 'products.*', roles: ['sales', 'warehouse', 'manufacturer'], icon: I.box },
+        { label: 'Stock In (scan)', href: '/stock-in', match: 'stockin.*', roles: ['warehouse'], icon: I.scan },
         { label: 'Stock ledger', href: '/stock-ledger', match: 'stock.*', roles: ['sales', 'warehouse', 'manufacturer'], icon: I.ledger },
     ] },
     { title: 'Factory', items: [

@@ -3,9 +3,10 @@ import { Button, Card, Field, Input, PageHeader, Select } from '@/Components/ui'
 import { num, taka, toMinor, uuid } from '@/lib/format';
 import { PageProps } from '@/types';
 import { Head, useForm } from '@inertiajs/react';
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useMemo, useRef, useState } from 'react';
+import { beep, lookupBarcode } from '@/lib/scan';
 
-type Product = { id: number; sku: string; name: string; price_minor: number; stock: { available_stock: number } | null };
+type Product = { id: number; sku: string; name: string; label: string; color: string | null; size: string | null; barcode: string | null; price_minor: number; stock: { available_stock: number } | null };
 type Line = { product_id: string; quantity: string; price: string };
 
 export default function CreateOrder({ products }: PageProps<{ products: Product[] }>) {
@@ -18,6 +19,31 @@ export default function CreateOrder({ products }: PageProps<{ products: Product[
     const subtotal = lines.reduce((a, l) => a + toMinor(l.price) * (parseInt(l.quantity) || 0), 0);
     const total = subtotal + toMinor(f.data.delivery) - toMinor(f.data.discount);
     const e = f.errors as Record<string, string>;
+    const [scanCode, setScanCode] = useState('');
+    const [scanMsg, setScanMsg] = useState<{ ok: boolean; text: string } | null>(null);
+    const scanRef = useRef<HTMLInputElement>(null);
+    // Scan a product label: adds the line with name, SKU and price filled in; scanning again adds +1.
+    const scanAdd = async (ev: { preventDefault: () => void }) => {
+        ev.preventDefault();
+        const code = scanCode.trim(); if (!code) return;
+        setScanCode('');
+        let p = products.find((x) => x.barcode === code || x.sku.toLowerCase() === code.toLowerCase());
+        if (!p) {
+            try { const r = await lookupBarcode(code); const id = r.matched_id; p = id ? byId.get(String(id)) : undefined;
+                if (!p) { beep(false); setScanMsg({ ok: false, text: r.style ? `${r.style.name}: scan the colour/size label, not the style code.` : 'Product is inactive.' }); return; }
+            } catch (err) { beep(false); setScanMsg({ ok: false, text: err instanceof Error ? err.message : 'Not found' }); return; }
+        }
+        const pid = String(p.id), found = p;
+        setLines((ls) => {
+            const i = ls.findIndex((l) => l.product_id === pid);
+            if (i >= 0) return ls.map((l, j) => (j === i ? { ...l, quantity: String((parseInt(l.quantity) || 0) + 1) } : l));
+            const blank = ls.findIndex((l) => !l.product_id);
+            const line = { product_id: pid, quantity: '1', price: String(found.price_minor / 100) };
+            return blank >= 0 ? ls.map((l, j) => (j === blank ? line : l)) : [...ls, line];
+        });
+        beep(true); setScanMsg({ ok: true, text: `Added ${found.label} · ${found.sku} · ৳${found.price_minor / 100}` });
+        scanRef.current?.focus();
+    };
 
     const submit = (ev: FormEvent) => {
         ev.preventDefault();
@@ -45,6 +71,12 @@ export default function CreateOrder({ products }: PageProps<{ products: Product[
                     </Card>
                     <Card title="Products">
                         <div className="space-y-3 p-5">
+                            <div className="flex gap-2">
+                                <Input ref={scanRef} value={scanCode} onChange={(x) => setScanCode(x.target.value)} onKeyDown={(ev) => { if (ev.key === 'Enter') scanAdd(ev); }}
+                                    placeholder="Scan product barcode (name, SKU, price fill in automatically)" autoComplete="off" />
+                                <Button type="button" variant="secondary" onClick={scanAdd} disabled={!scanCode.trim()}>Add</Button>
+                            </div>
+                            {scanMsg && <p className={`text-sm ${scanMsg.ok ? 'text-emerald-700' : 'text-rose-600'}`}>{scanMsg.text}</p>}
                             {lines.map((l, i) => {
                                 const p = byId.get(l.product_id);
                                 return (
@@ -54,7 +86,7 @@ export default function CreateOrder({ products }: PageProps<{ products: Product[
                                                 <Select value={l.product_id} onChange={(x) => { const np = byId.get(x.target.value); setLine(i, { product_id: x.target.value, price: np ? String(np.price_minor / 100) : '' }); }} required>
                                                     <option value="">Select product…</option>
                                                     {products.map((pp) => <option key={pp.id} value={pp.id} disabled={lines.some((o, j) => j !== i && o.product_id === String(pp.id))}>
-                                                        {pp.name} ({pp.sku}) — {num(pp.stock?.available_stock)} available</option>)}
+                                                        {pp.label} ({pp.sku}) — {num(pp.stock?.available_stock)} available</option>)}
                                                 </Select>
                                             </Field>
                                         </div>

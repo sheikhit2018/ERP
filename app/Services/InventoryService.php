@@ -1,6 +1,6 @@
 <?php
 namespace App\Services;
-use App\Models\{Product, RawMaterial, BomItem, Bom, RawMaterialStock, FinishedGoodStock, ManufacturingOrder, ManufacturingConsumption,
+use App\Models\{ProductStyle, StockReceipt, Product, RawMaterial, BomItem, Bom, RawMaterialStock, FinishedGoodStock, ManufacturingOrder, ManufacturingConsumption,
     SalesOrder, SalesOrderItem, Shipment, CourierReturn, ReturnItem, CourierLog, InventoryMovement};
 use App\Tenancy\TenantContext;
 use Illuminate\Support\Facades\{DB, Validator};
@@ -17,6 +17,25 @@ class InventoryService {
     }
     private function fail(string $message): never {
         throw ValidationException::withMessages(['inventory' => [$message]]);
+    }
+    /** Normalise scanned items [{product_id, quantity}] to [product_id => qty]; null = no scan verification. */
+    private function scanMap(mixed $scans): ?array {
+        if ($scans === null) return null;
+        Validator::make(['scans'=>$scans], ['scans'=>'array|max:500', 'scans.*.product_id'=>'required|integer|min:1', 'scans.*.quantity'=>'required|integer|min:1|max:1000000'])->validate();
+        $map = [];
+        foreach ($scans as $row) $map[(int)$row['product_id']] = ($map[(int)$row['product_id']] ?? 0) + (int)$row['quantity'];
+        return $map;
+    }
+    private function assertScansMatch(array $expected, array $scanned): void {
+        ksort($expected); ksort($scanned);
+        if ($expected === $scanned) return;
+        $names = Product::whereIn('id', array_unique(array_merge(array_keys($expected), array_keys($scanned))))->get()->keyBy('id');
+        $diff = [];
+        foreach ($expected + $scanned as $pid => $_) {
+            $want = $expected[$pid] ?? 0; $got = $scanned[$pid] ?? 0;
+            if ($want !== $got) $diff[] = ($names[$pid]->label ?? "#$pid").": need $want, scanned $got";
+        }
+        $this->fail('Scanned items do not match the order. '.implode('; ', $diff));
     }
     private function hash(array $data): string { return hash('sha256', json_encode($data, JSON_THROW_ON_ERROR)); }
     private function replay($model, string $hash) {
@@ -128,9 +147,10 @@ class InventoryService {
     }
     public function handover(int $id, array $data, int $actor): SalesOrder {
         $d = Validator::make($data, ['courier'=>'required|string|max:40|regex:/^[a-z0-9_-]+$/', 'tracking_id'=>'required|string|max:120'])->validate();
-        $d['tracking_id'] = trim($d['tracking_id']);
+        $scans = $this->scanMap($data['scans'] ?? null);
+        $d = ['courier'=>$d['courier'], 'tracking_id'=>trim($d['tracking_id'])];
         if ($d['tracking_id'] === '') $this->fail('Tracking ID is required.');
-        return $this->transaction(function () use ($id, $d, $actor) {
+        return $this->transaction(function () use ($id, $d, $actor, $scans) {
             $o = SalesOrder::whereKey($id)->lockForUpdate()->firstOrFail();
             $old = $o->shipment()->first();
             if ($old) {
@@ -138,6 +158,7 @@ class InventoryService {
                 return $o;
             }
             abort_unless($o->status === 'confirmed', 409, 'Confirm the order before handover.');
+            if ($scans !== null) $this->assertScansMatch($o->items()->get()->mapWithKeys(fn ($i) => [(int)$i->product_id => (int)$i->quantity])->all(), $scans);
             abort_if(Shipment::where('courier',$d['courier'])->where('tracking_id',$d['tracking_id'])->exists(), 409, 'Tracking ID already assigned.');
             $s = Shipment::create($d + ['sales_order_id'=>$id, 'status'=>'shipped', 'handed_over_at'=>now()]);
             foreach ($o->items()->orderBy('product_id')->get() as $i) {
@@ -145,7 +166,7 @@ class InventoryService {
                 $this->move($stock, 'reserved_stock', -(int)$i->quantity, 'handover', "SHIPMENT:$s->id", $actor);
                 $this->move($stock, 'transit_stock', (int)$i->quantity, 'handover', "SHIPMENT:$s->id", $actor);
             }
-            $o->status = 'shipped'; $o->save(); $this->log($s, 'handed_over', $actor);
+            $o->status = 'shipped'; $o->save(); $this->log($s, 'handed_over', $actor, $scans !== null ? ['scan_verified'=>true] : []);
             return $o;
         });
     }
@@ -182,15 +203,21 @@ class InventoryService {
             return $r;
         });
     }
-    public function qc(int $id, string $decision, int $actor): CourierReturn {
+    public function qc(int $id, string $decision, int $actor, ?array $scansInput = null): CourierReturn {
         Validator::make(['decision'=>$decision], ['decision'=>'required|in:QC_PASSED,DAMAGED'])->validate();
-        return $this->transaction(function () use ($id, $decision, $actor) {
+        $scans = $this->scanMap($scansInput);
+        return $this->transaction(function () use ($id, $decision, $actor, $scans) {
             $r = CourierReturn::whereKey($id)->lockForUpdate()->firstOrFail();
             $target = $decision === 'QC_PASSED' ? 'passed' : 'damaged';
             if ($r->status === $target) return $r;
             abort_unless($r->status === 'pending', 409, 'QC already finalized with another decision.');
             $s = $r->shipment()->firstOrFail(); $o = $s->order()->lockForUpdate()->firstOrFail();
             abort_unless($o->status === 'return_pending' && $s->status === 'return_pending', 409, 'Invalid return state.');
+            if ($scans !== null) {
+                $expected = [];
+                foreach ($r->items()->with('orderItem')->get() as $i) $expected[(int)$i->orderItem->product_id] = ($expected[(int)$i->orderItem->product_id] ?? 0) + (int)$i->quantity;
+                $this->assertScansMatch($expected, $scans);
+            }
             foreach ($r->items()->with('orderItem')->orderBy('sales_order_item_id')->get() as $i) {
                 $stock = $this->stock((int)$i->orderItem->product_id);
                 $this->move($stock, 'transit_stock', -(int)$i->quantity, 'return_qc', "RETURN:$id", $actor);
@@ -199,7 +226,7 @@ class InventoryService {
             }
             $r->status = $target; $r->reviewed_by = $actor; $r->reviewed_at = now(); $r->save();
             $o->status = $target === 'passed' ? 'returned' : 'return_damaged'; $o->save();
-            $s->status = $o->status; $s->save(); $this->log($s, $decision, $actor);
+            $s->status = $o->status; $s->save(); $this->log($s, $decision, $actor, $scans !== null ? ['scan_verified'=>true] : []);
             return $r;
         });
     }
@@ -221,6 +248,7 @@ class InventoryService {
             $p = Product::create(['sku'=>$d['sku'], 'name'=>$d['name'], 'base_unit'=>$d['base_unit'] ?? 'piece',
                 'price_minor'=>(int)$d['price_minor'], 'cost_minor'=>(int)($d['cost_minor'] ?? 0),
                 'low_stock_level'=>(int)($d['low_stock_level'] ?? 5)]);
+            $p->barcode = $this->nextBarcode(); $p->save();
             $stock = FinishedGoodStock::create(['product_id'=>$p->id]);
             if (!empty($d['opening_stock'])) $this->move($stock, 'available_stock', (int)$d['opening_stock'], 'opening', "PRODUCT:$p->id", $actor);
             return $p;
@@ -291,6 +319,134 @@ class InventoryService {
             $bom = Bom::create(['product_id'=>$product->id, 'version'=>$version, 'active'=>true]);
             foreach ($d['items'] as $i) BomItem::create(['bom_id'=>$bom->id, 'raw_material_id'=>(int)$i['raw_material_id'], 'quantity_per_unit'=>(int)$i['quantity_per_unit']]);
             return $bom;
+        });
+    }
+
+    /* ------------------------------------------------------------------
+     | Colour / size variants, barcodes and scanned stock-in.
+     * ------------------------------------------------------------------ */
+
+    /** Next unique in-store EAN-13 for this tenant. Call only inside transaction() (tenant row is locked). */
+    private function nextBarcode(): string {
+        $tenant = app(TenantContext::class)->id();
+        $prefix = '2'.str_pad((string) ($tenant % 1000), 3, '0', STR_PAD_LEFT);
+        $max = 0;
+        foreach ([Product::query(), ProductStyle::query()] as $q) {
+            $b = $q->where('barcode', 'like', $prefix.'%')->whereRaw('length(barcode) = 13')->max('barcode');
+            if ($b) $max = max($max, (int) substr($b, 4, 8));
+        }
+        $body = $prefix.str_pad((string) ($max + 1), 8, '0', STR_PAD_LEFT);
+        $sum = 0;
+        foreach (str_split($body) as $i => $digit) $sum += (int) $digit * ($i % 2 ? 3 : 1);
+        return $body.((10 - $sum % 10) % 10);
+    }
+
+    private static function cleanList(array $items, int $max): array {
+        $out = [];
+        foreach ($items as $v) {
+            $v = trim(preg_replace('/\s+/', ' ', (string) $v));
+            if ($v !== '' && !in_array(mb_strtolower($v), array_map('mb_strtolower', $out), true)) $out[] = mb_substr($v, 0, $max);
+        }
+        return $out;
+    }
+    private static function skuPart(string $v): string {
+        $v = strtoupper(preg_replace('/[^A-Za-z0-9]+/', '', $v));
+        return $v !== '' ? substr($v, 0, 12) : 'X';
+    }
+
+    /** Create a style (design) and one variant per colour x size, each with its own barcode and stock row. */
+    public function createStyle(array $data, int $actor): ProductStyle {
+        $d = Validator::make($data, [
+            'code'=>'required|string|max:40|regex:/^[A-Za-z0-9._-]+$/', 'name'=>'required|string|max:150',
+            'price_minor'=>'required|integer|min:0|max:100000000000', 'cost_minor'=>'nullable|integer|min:0|max:100000000000',
+            'low_stock_level'=>'nullable|integer|min:0|max:1000000000',
+            'colors'=>'required|array|min:1|max:40', 'colors.*'=>'required|string|max:40',
+            'sizes'=>'required|array|min:1|max:40', 'sizes.*'=>'required|string|max:20',
+            'barcode'=>'nullable|string|max:64|regex:/^[A-Za-z0-9-]+$/',
+        ])->validate();
+        $colors = self::cleanList($d['colors'], 40); $sizes = self::cleanList($d['sizes'], 20);
+        if (!$colors || !$sizes) $this->fail('Add at least one colour and one size.');
+        return $this->transaction(function () use ($d, $colors, $sizes) {
+            $code = strtoupper($d['code']);
+            if (ProductStyle::where('code', $code)->exists()) $this->fail("Style code $code already exists.");
+            $barcode = !empty($d['barcode']) ? $d['barcode'] : $this->nextBarcode();
+            $this->assertBarcodeFree($barcode);
+            $style = ProductStyle::create(['code'=>$code, 'name'=>$d['name'], 'barcode'=>$barcode]);
+            $this->makeVariants($style, $colors, $sizes, (int) $d['price_minor'], (int) ($d['cost_minor'] ?? 0), (int) ($d['low_stock_level'] ?? 5));
+            return $style;
+        });
+    }
+
+    /** Add more colours and/or sizes to an existing style; existing combinations are skipped. */
+    public function addVariants(int $styleId, array $data): int {
+        $d = Validator::make($data, [
+            'colors'=>'required|array|min:1|max:40', 'colors.*'=>'required|string|max:40',
+            'sizes'=>'required|array|min:1|max:40', 'sizes.*'=>'required|string|max:20',
+            'price_minor'=>'nullable|integer|min:0|max:100000000000',
+        ])->validate();
+        return $this->transaction(function () use ($styleId, $d) {
+            $style = ProductStyle::whereKey($styleId)->firstOrFail();
+            $ref = Product::where('style_id', $style->id)->orderBy('id')->first();
+            return $this->makeVariants($style, self::cleanList($d['colors'], 40), self::cleanList($d['sizes'], 20),
+                (int) ($d['price_minor'] ?? $ref?->price_minor ?? 0), (int) ($ref?->cost_minor ?? 0), (int) ($ref?->low_stock_level ?? 5));
+        });
+    }
+
+    private function makeVariants(ProductStyle $style, array $colors, array $sizes, int $price, int $cost, int $low): int {
+        $made = 0;
+        foreach ($colors as $color) foreach ($sizes as $size) {
+            $exists = Product::where('style_id', $style->id)->where('color', $color)->where('size', $size)->exists();
+            if ($exists) continue;
+            $sku = $style->code.'-'.self::skuPart($color).'-'.self::skuPart($size);
+            if (Product::where('sku', $sku)->exists()) $sku .= '-'.substr(md5($color.$size), 0, 4);
+            $p = Product::create(['sku'=>$sku, 'name'=>$style->name, 'base_unit'=>'piece', 'style_id'=>$style->id,
+                'color'=>$color, 'size'=>$size, 'barcode'=>$this->nextBarcode(),
+                'price_minor'=>$price, 'cost_minor'=>$cost, 'low_stock_level'=>$low]);
+            FinishedGoodStock::create(['product_id'=>$p->id]);
+            $made++;
+        }
+        return $made;
+    }
+
+    private function assertBarcodeFree(string $barcode, ?int $exceptProduct = null): void {
+        $p = Product::where('barcode', $barcode)->when($exceptProduct, fn ($q) => $q->whereKeyNot($exceptProduct))->exists();
+        if ($p || ProductStyle::where('barcode', $barcode)->exists()) $this->fail("Barcode $barcode is already used.");
+    }
+
+    /** Use the manufacturer's own barcode for one variant instead of the generated one. */
+    public function setBarcode(int $productId, string $barcode): Product {
+        Validator::make(['barcode'=>$barcode], ['barcode'=>'required|string|max:64|regex:/^[A-Za-z0-9-]+$/'])->validate();
+        return $this->transaction(function () use ($productId, $barcode) {
+            $p = Product::whereKey($productId)->firstOrFail();
+            $this->assertBarcodeFree($barcode, $p->id);
+            $p->barcode = $barcode; $p->save();
+            return $p;
+        });
+    }
+
+    /**
+     * Scanned Stock In (goods receipt): many variants in one batch, all-or-nothing, idempotent.
+     * lines: [{product_id, quantity}], reason: purchase|production|return|opening|recount
+     */
+    public function receiveStock(array $data, int $actor): StockReceipt {
+        $d = Validator::make($data, [
+            'idempotency_key'=>'required|uuid', 'reason'=>'required|in:purchase,production,return,opening,recount',
+            'note'=>'nullable|string|max:190', 'lines'=>'required|array|min:1|max:1000',
+            'lines.*.product_id'=>'required|integer|min:1', 'lines.*.quantity'=>'required|integer|min:1|max:10000000',
+        ])->validate();
+        $lines = [];
+        foreach ($d['lines'] as $l) $lines[(int) $l['product_id']] = ($lines[(int) $l['product_id']] ?? 0) + (int) $l['quantity'];
+        ksort($lines);
+        $hash = $this->hash([$d['reason'], $d['note'] ?? null, $lines]);
+        return $this->transaction(function () use ($d, $lines, $hash, $actor) {
+            $old = StockReceipt::where('idempotency_key', $d['idempotency_key'])->first();
+            if ($old) return $this->replay($old, $hash);
+            $receipt = StockReceipt::create(['idempotency_key'=>$d['idempotency_key'], 'request_hash'=>$hash, 'reason'=>$d['reason'],
+                'note'=>$d['note'] ?? null, 'total_quantity'=>array_sum($lines), 'line_count'=>count($lines), 'created_by'=>$actor]);
+            foreach ($lines as $pid => $qty) {
+                $this->move($this->stock($pid), 'available_stock', $qty, 'stock_in_'.$d['reason'], "RECEIPT:$receipt->id", $actor);
+            }
+            return $receipt;
         });
     }
 }
