@@ -1,6 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Dialog from '@/Components/Modal2';
 import TagInput from '@/Components/TagInput';
+import QtyGrid, { Qty, qtyLines, qtyTotal } from '@/Components/QtyGrid';
 import { Button, Card, Empty, Field, Input, LinkButton, PageHeader, Pagination, Select, td, th } from '@/Components/ui';
 import { num, taka, toMinor } from '@/lib/format';
 import { lookupBarcode, uniq } from '@/lib/scan';
@@ -21,6 +22,7 @@ const COLOR_SUGGEST = ['White', 'Black', 'Navy', 'Grey', 'Red', 'Maroon', 'Olive
 function CreateForm({ onDone }: { onDone: () => void }) {
     const [colors, setColors] = useState<string[]>([]);
     const [sizes, setSizes] = useState<string[]>(['S', 'M', 'L', 'XL']);
+    const [qty, setQty] = useState<Qty>({});
     const f = useForm({ code: '', name: '', price: '', cost: '', low: '10', barcode: '' });
     const e = f.errors as Record<string, string>;
     const [exists, setExists] = useState<string | null>(null);
@@ -37,8 +39,8 @@ function CreateForm({ onDone }: { onDone: () => void }) {
     const submit = (ev: FormEvent) => {
         ev.preventDefault();
         f.transform((d) => ({ code: d.code.trim(), name: d.name.trim(), price_minor: toMinor(d.price), cost_minor: toMinor(d.cost),
-            low_stock_level: parseInt(d.low) || 0, colors, sizes, barcode: d.barcode.trim() || null }));
-        f.post('/products', { preserveScroll: true, onSuccess: () => { f.reset(); setColors([]); onDone(); } });
+            low_stock_level: parseInt(d.low) || 0, colors, sizes, barcode: d.barcode.trim() || null, quantities: qtyLines(qty, colors, sizes) }));
+        f.post('/products', { preserveScroll: true, onSuccess: () => { f.reset(); setColors([]); setQty({}); onDone(); } });
     };
     return (
         <form onSubmit={submit} className="space-y-4">
@@ -55,9 +57,14 @@ function CreateForm({ onDone }: { onDone: () => void }) {
             </div>
             <Field label="Colours" error={e.colors}><TagInput value={colors} onChange={setColors} addLabel="Add colour" placeholder="Type a colour, press Enter" suggestions={COLOR_SUGGEST} /></Field>
             <Field label="Sizes" error={e.sizes}><TagInput value={sizes} onChange={setSizes} addLabel="Add size" placeholder="Type a size, press Enter" suggestions={SIZE_SUGGEST} /></Field>
+            {colors.length > 0 && sizes.length > 0 && (
+                <Field label="Opening quantity per colour × size (optional)" hint="Click a colour or size name to fill a whole row / column. Leave 0 to add stock later with Stock In." error={e.quantities}>
+                    <QtyGrid colors={colors} sizes={sizes} value={qty} onChange={setQty} />
+                </Field>
+            )}
             <Field label="Low-stock alert at (per variant)"><Input type="number" min="0" value={f.data.low} onChange={(x) => f.setData('low', x.target.value)} className="max-w-[140px]" /></Field>
             <p className="rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-900">
-                {colors.length && sizes.length ? <>Creates <b>{colors.length * sizes.length} variants</b> ({colors.length} colours × {sizes.length} sizes), each with its own barcode.</> : 'Add at least one colour and one size.'}
+                {colors.length && sizes.length ? <>Creates <b>{colors.length * sizes.length} variants</b> ({colors.length} colours × {sizes.length} sizes), each with its own barcode{qtyTotal(qty, colors, sizes) > 0 && <>, and books <b>{num(qtyTotal(qty, colors, sizes))} pcs</b> opening stock</>}.</> : 'Add at least one colour and one size.'}
             </p>
             {e.inventory && <p className="text-sm text-rose-600">{e.inventory}</p>}
             <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onDone}>Cancel</Button>
@@ -68,11 +75,13 @@ function CreateForm({ onDone }: { onDone: () => void }) {
 
 function AddVariantsForm({ style, mode, colors, sizes, onDone }: { style: Style; mode: 'colour' | 'size'; colors: string[]; sizes: string[]; onDone: () => void }) {
     const [items, setItems] = useState<string[]>([]);
+    const [qty, setQty] = useState<Qty>({});
     const f = useForm({});
     const e = f.errors as Record<string, string>;
+    const gColors = mode === 'colour' ? items : colors, gSizes = mode === 'colour' ? sizes : items;
     const submit = (ev: FormEvent) => {
         ev.preventDefault();
-        f.transform(() => mode === 'colour' ? { colors: items, sizes } : { colors, sizes: items });
+        f.transform(() => ({ colors: gColors, sizes: gSizes, quantities: qtyLines(qty, gColors, gSizes) }));
         f.post(`/styles/${style.id}/variants`, { preserveScroll: true, onSuccess: onDone });
     };
     const other = mode === 'colour' ? sizes : colors;
@@ -81,6 +90,7 @@ function AddVariantsForm({ style, mode, colors, sizes, onDone }: { style: Style;
             <TagInput value={items} onChange={setItems} addLabel={mode === 'colour' ? 'Add colour' : 'Add size'}
                 placeholder={mode === 'colour' ? 'New colour, press Enter' : 'New size, press Enter'}
                 suggestions={(mode === 'colour' ? COLOR_SUGGEST : SIZE_SUGGEST).filter((s) => !(mode === 'colour' ? colors : sizes).includes(s))} />
+            {items.length > 0 && <Field label="Opening quantity (optional)"><QtyGrid colors={gColors} sizes={gSizes} value={qty} onChange={setQty} /></Field>}
             <p className="text-sm text-slate-600">Each new {mode} is created in all {other.length} existing {mode === 'colour' ? 'sizes' : 'colours'} ({other.join(', ')}) = <b>{items.length * other.length}</b> new variants with barcodes.</p>
             {(e.inventory || e.colors || e.sizes) && <p className="text-sm text-rose-600">{e.inventory || e.colors || e.sizes}</p>}
             <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onDone}>Cancel</Button><Button disabled={f.processing || !items.length}>Add</Button></div>
@@ -143,7 +153,7 @@ function StyleCard({ style, items, canEdit, onOpen, onAdd }: { style: Style; ite
                 <div className="flex flex-wrap gap-2">
                     {canEdit && <Button variant="secondary" onClick={() => onAdd('colour')}>+ Add colour</Button>}
                     {canEdit && <Button variant="secondary" onClick={() => onAdd('size')}>+ Add size</Button>}
-                    <LinkButton variant="secondary" href={`/labels?style=${style.id}`}>Print labels</LinkButton>
+                    <LinkButton variant="secondary" href={`/labels?style=${style.id}&copies=stock`}>Print labels</LinkButton>
                 </div>
             </div>
             <div className="overflow-x-auto">
@@ -226,9 +236,9 @@ export default function Products({ products, styles, q, role }: PageProps<{ prod
             )}
             <Pagination links={products.links} />
 
-            <Dialog show={creating} onClose={() => setCreating(false)} title="Add product"><CreateForm onDone={() => setCreating(false)} /></Dialog>
+            <Dialog show={creating} onClose={() => setCreating(false)} title="Add product" wide><CreateForm onDone={() => setCreating(false)} /></Dialog>
             <Dialog show={!!open} onClose={() => setOpen(null)} title={open?.label ?? ''}>{open && <VariantDialog key={open.id} p={open} canEdit={canEdit} onDone={() => setOpen(null)} />}</Dialog>
-            <Dialog show={!!adding} onClose={() => setAdding(null)} title={adding ? `${adding.mode === 'colour' ? 'Add colour' : 'Add size'} — ${adding.style.name}` : ''}>
+            <Dialog wide show={!!adding} onClose={() => setAdding(null)} title={adding ? `${adding.mode === 'colour' ? 'Add colour' : 'Add size'} — ${adding.style.name}` : ''}>
                 {adding && <AddVariantsForm style={adding.style} mode={adding.mode} colors={uniq(addingItems.map((i) => i.color))} sizes={uniq(addingItems.map((i) => i.size))} onDone={() => setAdding(null)} />}
             </Dialog>
         </AuthenticatedLayout>

@@ -29,6 +29,7 @@ const NAV: NavGroup[] = [
     { title: 'Inventory', items: [
         { label: 'Products & stock', href: '/products', match: 'products.*', roles: ['sales', 'warehouse', 'manufacturer'], icon: I.box },
         { label: 'Stock In (scan)', href: '/stock-in', match: 'stockin.*', roles: ['warehouse'], icon: I.scan },
+        { label: 'Barcode generator', href: '/barcodes', match: 'barcodes.*', roles: ['sales', 'warehouse', 'manufacturer'], icon: I.scan },
         { label: 'Stock ledger', href: '/stock-ledger', match: 'stock.*', roles: ['sales', 'warehouse', 'manufacturer'], icon: I.ledger },
     ] },
     { title: 'Factory', items: [

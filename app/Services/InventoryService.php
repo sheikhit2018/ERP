@@ -363,37 +363,42 @@ class InventoryService {
             'colors'=>'required|array|min:1|max:40', 'colors.*'=>'required|string|max:40',
             'sizes'=>'required|array|min:1|max:40', 'sizes.*'=>'required|string|max:20',
             'barcode'=>'nullable|string|max:64|regex:/^[A-Za-z0-9-]+$/',
-        ])->validate();
+        ] + self::QTY_RULES)->validate();
         $colors = self::cleanList($d['colors'], 40); $sizes = self::cleanList($d['sizes'], 20);
         if (!$colors || !$sizes) $this->fail('Add at least one colour and one size.');
-        return $this->transaction(function () use ($d, $colors, $sizes) {
+        return $this->transaction(function () use ($d, $colors, $sizes, $actor) {
             $code = strtoupper($d['code']);
             if (ProductStyle::where('code', $code)->exists()) $this->fail("Style code $code already exists.");
             $barcode = !empty($d['barcode']) ? $d['barcode'] : $this->nextBarcode();
             $this->assertBarcodeFree($barcode);
             $style = ProductStyle::create(['code'=>$code, 'name'=>$d['name'], 'barcode'=>$barcode]);
-            $this->makeVariants($style, $colors, $sizes, (int) $d['price_minor'], (int) ($d['cost_minor'] ?? 0), (int) ($d['low_stock_level'] ?? 5));
+            $made = $this->makeVariants($style, $colors, $sizes, (int) $d['price_minor'], (int) ($d['cost_minor'] ?? 0), (int) ($d['low_stock_level'] ?? 5));
+            $this->openingStock($style, $made, $d['quantities'] ?? [], $actor);
             return $style;
         });
     }
 
     /** Add more colours and/or sizes to an existing style; existing combinations are skipped. */
-    public function addVariants(int $styleId, array $data): int {
+    public function addVariants(int $styleId, array $data, int $actor = 0): int {
         $d = Validator::make($data, [
             'colors'=>'required|array|min:1|max:40', 'colors.*'=>'required|string|max:40',
             'sizes'=>'required|array|min:1|max:40', 'sizes.*'=>'required|string|max:20',
             'price_minor'=>'nullable|integer|min:0|max:100000000000',
-        ])->validate();
-        return $this->transaction(function () use ($styleId, $d) {
+        ] + self::QTY_RULES)->validate();
+        if (!empty($d['quantities']) && $actor < 1) $this->fail('Opening stock needs a signed-in user.');
+        return $this->transaction(function () use ($styleId, $d, $actor) {
             $style = ProductStyle::whereKey($styleId)->firstOrFail();
             $ref = Product::where('style_id', $style->id)->orderBy('id')->first();
-            return $this->makeVariants($style, self::cleanList($d['colors'], 40), self::cleanList($d['sizes'], 20),
+            $made = $this->makeVariants($style, self::cleanList($d['colors'], 40), self::cleanList($d['sizes'], 20),
                 (int) ($d['price_minor'] ?? $ref?->price_minor ?? 0), (int) ($ref?->cost_minor ?? 0), (int) ($ref?->low_stock_level ?? 5));
+            $this->openingStock($style, $made, $d['quantities'] ?? [], $actor);
+            return count($made);
         });
     }
 
-    private function makeVariants(ProductStyle $style, array $colors, array $sizes, int $price, int $cost, int $low): int {
-        $made = 0;
+    /** @return Product[] the variants that were actually created (existing combinations are skipped) */
+    private function makeVariants(ProductStyle $style, array $colors, array $sizes, int $price, int $cost, int $low): array {
+        $made = [];
         foreach ($colors as $color) foreach ($sizes as $size) {
             $exists = Product::where('style_id', $style->id)->where('color', $color)->where('size', $size)->exists();
             if ($exists) continue;
@@ -403,9 +408,35 @@ class InventoryService {
                 'color'=>$color, 'size'=>$size, 'barcode'=>$this->nextBarcode(),
                 'price_minor'=>$price, 'cost_minor'=>$cost, 'low_stock_level'=>$low]);
             FinishedGoodStock::create(['product_id'=>$p->id]);
-            $made++;
+            $made[] = $p;
         }
         return $made;
+    }
+
+    /** Optional opening quantity per colour x size, e.g. [{color:"White", size:"S", quantity:1000}]. */
+    private const QTY_RULES = [
+        'quantities'=>'nullable|array|max:1600', 'quantities.*.color'=>'required|string|max:40',
+        'quantities.*.size'=>'required|string|max:20', 'quantities.*.quantity'=>'required|integer|min:0|max:10000000',
+    ];
+
+    /**
+     * Book the opening quantities of freshly created variants as ONE stock receipt (reason "opening"),
+     * so they show in Stock In history and the stock ledger exactly like a scanned receipt.
+     * Only variants created in this request get stock, so a repeated "add colour" can never double-count.
+     */
+    private function openingStock(ProductStyle $style, array $made, array $quantities, int $actor): ?StockReceipt {
+        $key = fn ($c, $s) => mb_strtolower(trim(preg_replace('/\s+/', ' ', (string) $c))).'|'.mb_strtolower(trim(preg_replace('/\s+/', ' ', (string) $s)));
+        $wanted = [];
+        foreach ($quantities as $q) if ((int) $q['quantity'] > 0) $wanted[$key($q['color'], $q['size'])] = (int) $q['quantity'];
+        $lines = [];
+        foreach ($made as $p) if (isset($wanted[$key($p->color, $p->size)])) $lines[$p->id] = $wanted[$key($p->color, $p->size)];
+        if (!$lines) return null;
+        ksort($lines);
+        $receipt = StockReceipt::create(['idempotency_key'=>(string) \Illuminate\Support\Str::uuid(), 'request_hash'=>$this->hash(['opening', $style->id, $lines]),
+            'reason'=>'opening', 'note'=>mb_substr("Opening stock: {$style->name} ({$style->code})", 0, 190),
+            'total_quantity'=>array_sum($lines), 'line_count'=>count($lines), 'created_by'=>$actor]);
+        foreach ($lines as $pid => $qty) $this->move($this->stock($pid), 'available_stock', $qty, 'stock_in_opening', "RECEIPT:$receipt->id", $actor);
+        return $receipt;
     }
 
     private function assertBarcodeFree(string $barcode, ?int $exceptProduct = null): void {

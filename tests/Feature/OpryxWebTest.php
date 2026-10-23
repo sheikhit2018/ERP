@@ -149,4 +149,35 @@ class OpryxWebTest extends TestCase {
         $this->get_('/labels?style='.$style->id)->assertOk();
         $this->get_('/stock-in')->assertOk();
     }
+
+    public function test_opening_quantity_per_colour_and_size_with_own_barcodes(): void {
+        $this->actingAs($this->owner);
+        $this->post_('/products', ['code' => 'TEE', 'name' => 'Basic Tee', 'price_minor' => 45000,
+            'colors' => ['White', 'Black'], 'sizes' => ['S', 'M', 'L'],
+            'quantities' => [
+                ['color' => 'White', 'size' => 'S', 'quantity' => 1000], ['color' => 'white', 'size' => 'M', 'quantity' => 1100],
+                ['color' => 'White', 'size' => 'L', 'quantity' => 1200], ['color' => 'Black', 'size' => 'M', 'quantity' => 1100],
+                ['color' => 'Black', 'size' => 'S', 'quantity' => 0], ['color' => 'Pink', 'size' => 'S', 'quantity' => 50],
+            ]])->assertSessionHasNoErrors();
+        $stock = fn ($c, $s) => (int) DB::table('finished_good_stocks')->join('products', 'products.id', '=', 'finished_good_stocks.product_id')
+            ->where('color', $c)->where('size', $s)->value('available_stock');
+        $this->assertSame([1000, 1100, 1200, 1100, 0, 0], [$stock('White', 'S'), $stock('White', 'M'), $stock('White', 'L'), $stock('Black', 'M'), $stock('Black', 'S'), $stock('Black', 'L')]);
+        $this->assertSame(6, DB::table('products')->distinct()->count('barcode'));
+        $this->assertSame(0, DB::table('products')->where('color', 'Pink')->count());
+        $r = DB::table('stock_receipts')->first();
+        $this->assertSame(['opening', 4400, 4], [$r->reason, (int) $r->total_quantity, (int) $r->line_count]);
+        $this->assertSame(4, DB::table('inventory_movements')->where('reason', 'stock_in_opening')->count());
+
+        // New colour with quantities; re-adding an existing combination never adds stock twice.
+        $style = DB::table('product_styles')->where('code', 'TEE')->first();
+        $this->post_("/styles/{$style->id}/variants", ['colors' => ['Navy', 'White'], 'sizes' => ['S', 'M', 'L'],
+            'quantities' => [['color' => 'Navy', 'size' => 'M', 'quantity' => 300], ['color' => 'White', 'size' => 'S', 'quantity' => 999]]])->assertSessionHasNoErrors();
+        $this->assertSame([300, 1000], [$stock('Navy', 'M'), $stock('White', 'S')]);
+        $this->post_('/products', ['code' => 'BAD', 'name' => 'Bad', 'price_minor' => 1, 'colors' => ['A'], 'sizes' => ['S'],
+            'quantities' => [['color' => 'A', 'size' => 'S', 'quantity' => -5]]])->assertSessionHasErrors('quantities.0.quantity');
+
+        $this->get_('/labels?style='.$style->id.'&copies=stock')->assertOk()
+            ->assertInertia(fn ($p) => $p->component('Products/Labels')->where('copies', 'stock')->has('items', 9)->where('items.0.available', 1000));
+        $this->get_('/barcodes')->assertOk();
+    }
 }

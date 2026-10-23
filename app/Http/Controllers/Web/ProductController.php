@@ -26,13 +26,14 @@ class ProductController extends Controller {
         if ($r->filled('colors') || $r->filled('sizes')) {
             $style = $s->createStyle($r->all(), (int) $r->user()->id);
             $n = Product::where('style_id', $style->id)->count();
-            return back()->with('success', "{$style->name} created with $n variants and barcodes. Use Stock In to add quantities.");
+            $qty = (int) \App\Models\FinishedGoodStock::whereIn('product_id', Product::where('style_id', $style->id)->select('id'))->sum('available_stock');
+            return back()->with('success', "{$style->name} created: $n variants, each with its own barcode".($qty ? ", ".number_format($qty)." pcs in stock" : '').'. Click “Print labels” to print them.');
         }
         $p = $s->createProduct($r->all(), (int) $r->user()->id);
         return back()->with('success', "Product {$p->name} created.");
     }
     public function addVariants(Request $r, int $style, InventoryService $s) {
-        $n = $s->addVariants($style, $r->all());
+        $n = $s->addVariants($style, $r->all(), (int) $r->user()->id);
         return back()->with('success', $n ? "$n new variants added." : 'Those colour/size combinations already exist.');
     }
     public function update(Request $r, int $product, InventoryService $s) {
@@ -50,11 +51,16 @@ class ProductController extends Controller {
     /** Printable barcode labels for chosen variants (ids=1,2,3) or a whole style (style=ID). */
     public function labels(Request $r) {
         $ids = array_filter(array_map('intval', explode(',', (string) $r->query('ids', ''))));
-        $items = Product::with('style:id,code')
+        $items = Product::with(['style:id,code', 'stock:id,product_id,available_stock'])
             ->when($r->integer('style'), fn ($q, $sid) => $q->where('style_id', $sid))
             ->when($ids, fn ($q) => $q->whereIn('id', $ids))
             ->when(!$ids && !$r->integer('style'), fn ($q) => $q->whereRaw('1 = 0'))
             ->orderBy('id')->get(['id', 'sku', 'name', 'color', 'size', 'barcode', 'price_minor', 'style_id']);
-        return Inertia::render('Products/Labels', ['items' => $items]);
+        return Inertia::render('Products/Labels', ['items' => $items->map(fn ($p) => $p->only('id', 'sku', 'name', 'color', 'size', 'barcode', 'price_minor')
+            + ['available' => (int) ($p->stock->available_stock ?? 0)])->values(), 'copies' => $r->query('copies') === 'stock' ? 'stock' : 'one']);
+    }
+    /** Free barcode generator: any text / number, sequences, carton & shelf labels. Rendered fully in the browser. */
+    public function generator() {
+        return Inertia::render('Products/Generator');
     }
 }

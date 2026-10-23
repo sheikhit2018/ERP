@@ -17,6 +17,7 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::get('/stock-ledger', StockLedgerController::class)->name('stock.ledger');
         Route::get('/scan/lookup', [StockInController::class, 'lookup'])->name('scan.lookup');
         Route::get('/labels', [ProductController::class, 'labels'])->name('products.labels');
+        Route::get('/barcodes', [ProductController::class, 'generator'])->name('barcodes.generator');
     });
     Route::middleware('tenant.role:warehouse')->group(function () {
         Route::post('/products', [ProductController::class, 'store'])->name('products.store');
