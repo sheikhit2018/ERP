@@ -53,8 +53,11 @@ class OrderImportService {
                 'source' => $n['order_source'] ?? (in_array($n['source'], ['website', 'facebook', 'phone', 'whatsapp', 'pos', 'manual'], true) ? $n['source'] : 'website'),
                 'note' => isset($n['note']) && $n['note'] !== '' ? mb_substr(($n['reference'] ? "[{$n['reference']}] " : '').$n['note'], 0, 1000) : ($n['reference'] ? "[{$n['reference']}]" : null)])->save();
             $paid = min((int) ($n['paid'] ?? 0), $o->totalMinor());
-            if ($paid > 0) OrderPayment::create(['sales_order_id' => $o->id, 'method' => $n['paid_method'] ?? 'other', 'amount_minor' => $paid,
-                'reference' => $n['reference'] ? mb_substr((string) $n['reference'], 0, 120) : null, 'received_at' => now(), 'created_by' => $actor]);
+            if ($paid > 0) {
+                $pay = OrderPayment::create(['sales_order_id' => $o->id, 'method' => $n['paid_method'] ?? 'other', 'amount_minor' => $paid,
+                    'reference' => $n['reference'] ? mb_substr((string) $n['reference'], 0, 120) : null, 'received_at' => now(), 'created_by' => $actor]);
+                Accounts::auto('order_payment', $pay->id, $pay->method, 'in', $paid, 'customer_advance', $actor, ['reference' => $pay->reference, 'note' => "Online payment, order #{$o->id}", 'party_type' => 'customer', 'party_id' => $o->id]);
+            }
         }
         return $o;
     }

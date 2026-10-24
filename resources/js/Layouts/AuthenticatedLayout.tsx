@@ -45,6 +45,7 @@ const NAV: NavGroup[] = [
         { label: 'BOM / recipes', href: '/boms', match: 'boms.*', roles: ['manufacturer'], icon: I.bom },
         { label: 'Production', href: '/manufacturing', match: 'manufacturing.*', roles: ['manufacturer'], icon: I.factory },
     ] },
+    { title: 'Finance', items: [{ label: 'Accounts', href: '/accounts', match: 'accounts.*', roles: ['owner'], icon: I.money }] },
     { title: 'Company', items: [{ label: 'Team & roles', href: '/team', match: 'team.*', roles: ['owner'], icon: I.team },
         { label: 'Settings', href: '/settings', match: 'settings.*', roles: ['owner'], icon: I.gear }] },
 ];

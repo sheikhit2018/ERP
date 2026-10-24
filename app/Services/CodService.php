@@ -32,8 +32,11 @@ class CodService {
                 $this->fail("Transaction {$d['reference']} is already recorded.");
             $paid = (int) $o->payments()->sum('amount_minor');
             if ($paid + $d['amount_minor'] > $o->totalMinor()) $this->fail('Payment is more than the order total.');
-            return OrderPayment::create(['sales_order_id' => $o->id, 'method' => $d['method'], 'amount_minor' => $d['amount_minor'],
+            $pay = OrderPayment::create(['sales_order_id' => $o->id, 'method' => $d['method'], 'amount_minor' => $d['amount_minor'],
                 'reference' => $d['reference'] ?? null, 'received_at' => now(), 'created_by' => $actor]);
+            Accounts::auto('order_payment', $pay->id, $d['method'], 'in', $pay->amount_minor, 'customer_advance', $actor,
+                ['reference' => $pay->reference, 'note' => "Advance for order #{$o->id}", 'party_type' => 'customer', 'party_id' => $o->id]);
+            return $pay;
         });
     }
 
@@ -89,6 +92,8 @@ class CodService {
                     $delivered++;
                 }
             }
+            Accounts::auto('courier_payment', $p->id, 'cod', 'in', $p->net_minor, 'courier_cod', $actor,
+                ['date' => $d['paid_on'], 'reference' => $p->reference, 'note' => ucfirst($d['courier'])." payment: {$p->parcel_count} parcels", 'party_type' => 'courier']);
             return ['payment' => $p, 'skipped' => $skipped, 'delivered' => $delivered];
         });
     }

@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Web\{CodController, OrderImportController, SettingsController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
+use App\Http\Controllers\Web\{AccountsController, CodController, OrderImportController, SettingsController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
     RawMaterialController, ReturnPageController, SalesOrderController, StockLedgerController, TeamController};
 use App\Http\Controllers\CourierReturnController;
 use Illuminate\Support\Facades\Route;
@@ -100,6 +100,11 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
     });
 
     Route::middleware('tenant.role:owner')->group(function () {
+        Route::get('/accounts', [AccountsController::class, 'index'])->name('accounts.index');
+        Route::post('/accounts/entries', [AccountsController::class, 'store'])->name('accounts.store');
+        Route::post('/accounts/transfer', [AccountsController::class, 'transfer'])->name('accounts.transfer');
+        Route::delete('/accounts/entries/{entry}', [AccountsController::class, 'destroy'])->whereNumber('entry')->name('accounts.destroy');
+        Route::post('/accounts/accounts', [AccountsController::class, 'saveAccount'])->name('accounts.save');
         Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
         Route::post('/settings', [SettingsController::class, 'update'])->name('settings.update');
         Route::post('/settings/sms-test', [SettingsController::class, 'smsTest'])->name('settings.sms-test');
