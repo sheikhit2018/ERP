@@ -165,7 +165,7 @@ class InventoryService {
             if ($o->status === 'confirmed') { $o->packed_at = now(); $o->packed_by = $actor; }
             abort_if(Shipment::where('courier',$d['courier'])->where('tracking_id',$d['tracking_id'])->exists(), 409, 'Tracking ID already assigned.');
             $s = Shipment::create($d + ['sales_order_id'=>$id, 'status'=>'shipped', 'handed_over_at'=>now(),
-                'piece_count'=>(int) $o->items()->sum('quantity'), 'dispatch_batch_id'=>$batchId]);
+                'piece_count'=>(int) $o->items()->sum('quantity'), 'dispatch_batch_id'=>$batchId, 'cod_expected_minor'=>$o->codDueMinor()]);
             foreach ($o->items()->orderBy('product_id')->get() as $i) {
                 $stock = $this->stock((int)$i->product_id);
                 $this->move($stock, 'reserved_stock', -(int)$i->quantity, 'handover', "SHIPMENT:$s->id", $actor);

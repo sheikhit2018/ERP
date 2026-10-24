@@ -18,6 +18,9 @@ const I = {
     ledger: 'M4 4h16v16H4zM4 9h16M9 9v11',
     scan: 'M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M13 8v8M17 8v8',
     truck: 'M1 4h13v12H1zM14 8h4l3 4v4h-7M5.5 19a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3M17.5 19a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3',
+    money: 'M2 6h20v12H2zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6M6 9v.01M18 15v.01',
+    chart: 'M3 3v18h18M7 15l4-4 3 3 5-6',
+    gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
     team: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
 };
 
@@ -28,6 +31,7 @@ const NAV: NavGroup[] = [
         { label: 'Customers', href: '/customers', match: 'customers.*', roles: ['sales', 'warehouse'], icon: I.team },
         { label: 'Packing station', href: '/courier/pack', match: 'pack.*', roles: ['warehouse'], icon: I.scan },
         { label: 'Courier hub', href: '/courier', match: 'courier.*', roles: ['sales', 'warehouse', 'qc'], icon: I.truck },
+        { label: 'COD & payments', href: '/cod', match: 'cod.*', roles: ['sales'], icon: I.money },
         { label: 'Returns & QC', href: '/returns', match: 'returns.*', roles: ['qc', 'warehouse'], icon: I.ret },
     ] },
     { title: 'Inventory', items: [

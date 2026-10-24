@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Web\{CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
+use App\Http\Controllers\Web\{CodController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
     RawMaterialController, ReturnPageController, SalesOrderController, StockLedgerController, TeamController};
 use App\Http\Controllers\CourierReturnController;
 use Illuminate\Support\Facades\Route;
@@ -47,6 +47,10 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::get('/orders/{order}', [SalesOrderController::class, 'show'])->whereNumber('order')->name('orders.show');
     });
     Route::middleware('tenant.role:sales')->group(function () {
+        Route::get('/cod', [CodController::class, 'index'])->name('cod.index');
+        Route::get('/cod/import', [CodController::class, 'importPage'])->name('cod.import');
+        Route::post('/cod/import', [CodController::class, 'importStore'])->name('cod.import.store');
+        Route::post('/orders/{order}/payments', [CodController::class, 'payment'])->whereNumber('order')->name('orders.payments');
         Route::get('/orders/create', [SalesOrderController::class, 'create'])->name('orders.create');
         Route::post('/orders', [SalesOrderController::class, 'store'])->name('orders.store');
         Route::post('/orders/{order}/confirm', [SalesOrderController::class, 'confirm'])->whereNumber('order')->name('orders.confirm');

@@ -63,7 +63,7 @@ class SalesOrderController extends Controller {
         return redirect()->route('orders.show', $order->id)->with('success', "Order #{$order->id} saved and stock reserved.");
     }
     public function show(int $order) {
-        $o = SalesOrder::with(['items.product:id,sku,name,color,size,barcode', 'shipment.courierReturn'])->findOrFail($order);
+        $o = SalesOrder::with(['items.product:id,sku,name,color,size,barcode', 'shipment.courierReturn', 'payments'])->findOrFail($order);
         $logs = $o->shipment ? \App\Models\CourierLog::where('shipment_id', $o->shipment->id)->latest('id')->get() : [];
         return Inertia::render('Orders/Show', ['order' => $o, 'logs' => $logs]);
     }

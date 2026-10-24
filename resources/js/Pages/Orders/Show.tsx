@@ -7,12 +7,15 @@ import { FormEvent } from 'react';
 import ScanChecklist, { useScanChecklist } from '@/Components/ScanChecklist';
 import BarcodeSvg from '@/Components/BarcodeSvg';
 import { RiskCard, useCustomerRisk } from '@/Components/CustomerRisk';
+import OrderPayments, { Payment } from '@/Components/OrderPayments';
 
 type Order = {
     id: number; status: string; source: string; note: string | null; created_at: string; delivery_charge_minor: number; discount_minor: number;
     customer: { name: string; phone: string; address: string };
     items: { id: number; quantity: number; unit_price_minor: number; product: { id: number; sku: string; name: string; label: string; barcode: string | null } }[];
-    shipment: { courier: string; tracking_id: string; status: string; handed_over_at: string; courier_return: { id: number; status: string } | null } | null;
+    shipment: { courier: string; tracking_id: string; status: string; handed_over_at: string; courier_return: { id: number; status: string } | null;
+        cod_expected_minor?: number; cod_collected_minor?: number | null; courier_charge_minor?: number | null; settled_at?: string | null } | null;
+    payments: Payment[];
 };
 
 const COURIERS = [['steadfast', 'Steadfast'], ['pathao', 'Pathao'], ['redx', 'RedX'], ['paperfly', 'Paperfly'], ['ecourier', 'eCourier'], ['sundarban', 'Sundarban'], ['self', 'Own delivery']];
@@ -78,6 +81,7 @@ export default function ShowOrder({ order, logs, role }: PageProps<{ order: Orde
                 </div>
 
                 <div className="space-y-6">
+                    <OrderPayments orderId={order.id} total={total} payments={order.payments ?? []} shipment={order.shipment} canAdd={isSales && order.status !== 'cancelled'} />
                     <Card title="Customer">
                         <div className="space-y-1 p-5 text-sm">
                             <div className="font-semibold text-slate-900">{order.customer.name}</div>
