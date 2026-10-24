@@ -58,7 +58,10 @@ class CodService {
 
             $tracks = array_values(array_filter(array_map(fn ($l) => trim((string) ($l['tracking'] ?? '')), $d['lines'])));
             $orderIds = array_values(array_filter(array_map(fn ($l) => (int) preg_replace('/\D/', '', (string) ($l['invoice'] ?? '')), $d['lines'])));
-            $byTrack = Shipment::where('courier', $d['courier'])->whereIn('tracking_id', $tracks)->get()->keyBy('tracking_id');
+            $byTrack = collect();
+            foreach (Shipment::where('courier', $d['courier'])->where(fn ($q) => $q->whereIn('tracking_id', $tracks)->orWhereIn('alt_tracking', $tracks))->get() as $sh) {
+                $byTrack[$sh->tracking_id] = $sh; if ($sh->alt_tracking) $byTrack[$sh->alt_tracking] = $sh;
+            }
             $byOrder = Shipment::where('courier', $d['courier'])->whereIn('sales_order_id', $orderIds)->get()->keyBy('sales_order_id');
             $skipped = []; $use = [];
             foreach ($d['lines'] as $i => $l) {

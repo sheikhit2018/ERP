@@ -10,4 +10,5 @@ require __DIR__.'/opryx.php';
 Route::middleware('throttle:120,1')->prefix('hooks')->group(function () {
     Route::post('woocommerce', [WebhookController::class, 'woocommerce']);
     Route::post('shopify', [WebhookController::class, 'shopify']);
+    Route::post('steadfast', [WebhookController::class, 'steadfast']);
 });

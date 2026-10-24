@@ -38,4 +38,22 @@ class WebhookController extends Controller {
         $in = $s->receive('shopify', $n, $payload, SystemActor::id());
         return response()->json(['ok' => true, 'status' => $in->status, 'order_id' => $in->sales_order_id]);
     }
+
+    /**
+     * Steadfast status callback: Authorization: Bearer <token from Settings → Courier API>.
+     * Body: consignment_id, invoice, status, cod_amount, updated_at (delivery_status notifications).
+     */
+    public function steadfast(Request $r, \App\Services\Couriers\CourierApi $api) {
+        $token = (string) Settings::get('courier.steadfast.webhook_token', '');
+        abort_if($token === '', 404);
+        abort_unless(hash_equals('Bearer '.$token, (string) $r->header('Authorization', '')), 401, 'Unauthorized');
+        $cid = (string) ($r->input('consignment_id') ?? '');
+        $status = (string) ($r->input('status') ?? $r->input('delivery_status') ?? '');
+        if ($cid === '' || $status === '') return response()->json(['status' => 'ignored']);
+        $s = \App\Services\Couriers\CourierApi::shipmentFor('steadfast', $cid);
+        if ($s) { $api->apply($s, \App\Services\Couriers\Steadfast::state($status), $status, SystemActor::id()); return response()->json(['status' => 'success']); }
+        // Not handed over yet: remember the status on the booking (e.g. cancelled before pickup).
+        \App\Models\CourierBooking::where('courier', 'steadfast')->where('consignment_id', $cid)->update(['courier_status' => mb_substr($status, 0, 60)]);
+        return response()->json(['status' => 'success']);
+    }
 }

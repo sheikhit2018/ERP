@@ -172,6 +172,13 @@ class InventoryService {
                 $this->move($stock, 'reserved_stock', -(int)$i->quantity, 'handover', "SHIPMENT:$s->id", $actor);
                 $this->move($stock, 'transit_stock', (int)$i->quantity, 'handover', "SHIPMENT:$s->id", $actor);
             }
+            // Booked through the courier API? Remember its second id (tracking code) and close the booking.
+            $bk = \App\Models\CourierBooking::where('sales_order_id', $o->id)->where('courier', $d['courier'])->where('status', 'booked')
+                ->where(fn ($q) => $q->where('consignment_id', $d['tracking_id'])->orWhere('tracking_code', $d['tracking_id']))->first();
+            if ($bk) {
+                $s->forceFill(['tracking_id' => $bk->consignment_id, 'alt_tracking' => $bk->tracking_code])->save();
+                $bk->status = 'handed_over'; $bk->save();
+            }
             $o->status = 'shipped'; $o->save(); $this->log($s, 'handed_over', $actor, $scans !== null ? ['scan_verified'=>true] : []);
             Sms::orderEvent($o->id, 'shipped');
             return $o;
@@ -499,7 +506,11 @@ class InventoryService {
 
     /** Shipments by tracking id for one courier, keyed by tracking id. */
     private function shipmentsByTracking(string $courier, array $trackings) {
-        return Shipment::where('courier', $courier)->whereIn('tracking_id', $trackings)->get()->keyBy('tracking_id');
+        // Keyed by the id that was asked for: consignment id or the courier's tracking code.
+        $rows = Shipment::where('courier', $courier)->where(fn ($q) => $q->whereIn('tracking_id', $trackings)->orWhereIn('alt_tracking', $trackings))->get();
+        $map = collect();
+        foreach ($rows as $r) { $map[$r->tracking_id] = $r; if ($r->alt_tracking) $map[$r->alt_tracking] = $r; }
+        return $map->only($trackings);
     }
 
     /**
@@ -585,11 +596,13 @@ class InventoryService {
 
             $ships = $this->shipmentsByTracking($d['courier'], array_keys($parcels));
             $lines = SalesOrderItem::whereIn('sales_order_id', $ships->pluck('sales_order_id'))->get()->groupBy('sales_order_id');
-            $problems = []; $plan = [];
+            $problems = []; $plan = []; $seenShip = [];
             foreach ($parcels as $tracking => $p) {
                 $s = $ships[$tracking] ?? null;
                 if (!$s) { $problems[] = "$tracking not found for {$d['courier']}"; continue; }
                 if (!in_array($s->status, ['shipped', 'lost'], true)) { $problems[] = "$tracking (order #{$s->sales_order_id}) is already {$s->status}"; continue; }
+                if (isset($seenShip[$s->id])) { $problems[] = "$tracking is the same parcel as {$seenShip[$s->id]}"; continue; }
+                $seenShip[$s->id] = $tracking;
                 $rows = [];
                 foreach ($lines[$s->sales_order_id] ?? [] as $l) {
                     $sent = (int) $l->quantity;

@@ -7,7 +7,7 @@ import { Head, Link, router } from '@inertiajs/react';
 import { useState } from 'react';
 
 type Parcel = { id: number; order_id: number; tracking_id: string; status: string; pieces: number; customer: string; phone: string; address: string; items: string;
-    handed_over_at: string; delivered_at: string | null; returned_at: string | null; lost_at: string | null };
+    handed_over_at: string; delivered_at: string | null; returned_at: string | null; lost_at: string | null; courier_status?: string | null; alt_tracking?: string | null };
 type Props = { batch: { id: number; courier: string; parcel_count: number; piece_count: number; note: string | null; created_at: string; by: string | null };
     courierName: string; days: number; stats: Stats; parcels: Parcel[] };
 
@@ -54,11 +54,12 @@ export default function Batch({ batch, courierName, days, stats, parcels, role, 
                             <tr key={p.id} className={overdue(p) ? 'bg-rose-50/60 print:bg-transparent' : ''}>
                                 <td className={`${td} text-xs text-slate-400`}>{i + 1}</td>
                                 <td className={td}><Link href={`/orders/${p.order_id}`} className="font-semibold text-brand-700 print:text-black">#{p.order_id}</Link></td>
-                                <td className={`${td} font-mono text-xs`}>{p.tracking_id}</td>
+                                <td className={`${td} font-mono text-xs`}>{p.tracking_id}{p.alt_tracking && <div className="text-slate-400">{p.alt_tracking}</div>}</td>
                                 <td className={`${td} text-xs`}>{p.customer}<div className="text-slate-500">{p.phone}</div></td>
                                 <td className={`${td} text-xs`}>{p.items}</td>
                                 <td className={`${td} text-right tabular-nums`}>{p.pieces}</td>
                                 <td className={`${td} print:hidden`}><StatusBadge status={p.status} />
+                                    {p.courier_status && <div className="mt-0.5 text-[11px] text-slate-500">Courier: {p.courier_status.replace(/_/g, ' ')}</div>}
                                     {overdue(p) && <div className="mt-0.5 text-xs font-semibold text-rose-600">{ageDays(p.handed_over_at)} days</div>}</td>
                                 {isWh && <td className={`${td} whitespace-nowrap text-right print:hidden`}>{open(p) && <>
                                     <Button variant="ghost" className="!px-2 !py-1 text-xs" onClick={() => act(p.id, 'delivered', `Mark ${p.tracking_id} delivered?`)}>Delivered</Button>

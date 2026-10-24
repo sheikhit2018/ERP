@@ -1,6 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Couriers } from '@/Components/CourierStats';
 import ParcelImport from '@/Components/ParcelImport';
+import CourierBooking from '@/Components/CourierBooking';
 import { Button, Card, Empty, Field, Input, LinkButton, PageHeader, Select, td, th } from '@/Components/ui';
 import { beep } from '@/lib/scan';
 import { num, uuid } from '@/lib/format';
@@ -10,13 +11,14 @@ import { FormEvent, useMemo, useRef, useState } from 'react';
 
 type Ready = { id: number; name: string; phone: string; address: string; pieces: number; created_at: string };
 type Parcel = { order_id: number; tracking_id: string };
+type Booking = { id: number; sales_order_id: number; courier: string; consignment_id: string; tracking_code: string | null; cod_minor: number };
 
 /**
  * Bulk handover: scan/type the order number, then scan the courier tracking label, repeat.
  * One save = one handover record with the parcel and piece count the courier signs for.
  */
-export default function Dispatch({ couriers, orders, errors }: PageProps<{ couriers: Couriers; orders: Ready[] }>) {
-    const [courier, setCourier] = useState('steadfast');
+export default function Dispatch({ couriers, orders, errors, bookings, apiCouriers, unbooked }: PageProps<{ couriers: Couriers; orders: Ready[]; bookings: Record<string, Booking>; apiCouriers: string[]; unbooked: number }>) {
+    const [courier, setCourier] = useState(apiCouriers[0] ?? 'steadfast');
     const [note, setNote] = useState('');
     const [list, setList] = useState<Parcel[]>([]);
     const [orderNo, setOrderNo] = useState('');
@@ -30,7 +32,18 @@ export default function Dispatch({ couriers, orders, errors }: PageProps<{ couri
     const inList = new Set(list.map((p) => p.order_id));
     const pieces = list.reduce((a, p) => a + (byId.get(p.order_id)?.pieces ?? 0), 0);
     const say = (ok: boolean, text: string) => { setMsg({ ok, text }); beep(ok); };
-    const [mode, setMode] = useState<'scan' | 'file'>('scan');
+    const [mode, setMode] = useState<'scan' | 'file' | 'book'>('scan');
+    // Courier labels of API-booked parcels: consignment id / tracking code → order.
+    const byLabel = useMemo(() => { const m = new Map<string, Booking>(); Object.values(bookings ?? {}).forEach((b) => { m.set(b.consignment_id, b); if (b.tracking_code) m.set(b.tracking_code, b); }); return m; }, [bookings]);
+    const addBooked = (b: Booking) => {
+        if (b.courier !== courier) return say(false, `#${b.sales_order_id} is booked with ${couriers[b.courier] ?? b.courier}, not ${couriers[courier]}. Change the courier above.`);
+        if (inList.has(b.sales_order_id)) return say(false, `Order #${b.sales_order_id} is already in this handover.`);
+        if (!byId.has(b.sales_order_id)) return say(false, `Order #${b.sales_order_id} is booked but not packed yet — pack it first.`);
+        setList((l) => [{ order_id: b.sales_order_id, tracking_id: b.consignment_id }, ...l]);
+        say(true, `Added #${b.sales_order_id} → ${b.consignment_id}`);
+        setOrderNo(''); setTracking(''); requestAnimationFrame(() => orderRef.current?.focus());
+    };
+    const booked = Object.values(bookings ?? {}).filter((b) => b.courier === courier && byId.has(b.sales_order_id) && !inList.has(b.sales_order_id));
     const addMany = (ps: Parcel[]) => {
         setList((l) => [...ps.slice().reverse(), ...l]);
         say(true, `Added ${ps.length} parcels from the file. Check the list, then press “Hand over”.`);
@@ -38,7 +51,11 @@ export default function Dispatch({ couriers, orders, errors }: PageProps<{ couri
     };
 
     const pickOrder = (raw: string) => {
+        const lb = byLabel.get(raw.trim());
+        if (lb) return addBooked(lb); // a courier label was scanned
         const id = parseInt(raw.replace(/\D/g, ''));
+        const bk = bookings?.[String(id)];
+        if (bk && byId.has(id)) return addBooked(bk); // order already booked with the courier API: tracking is known
         const o = byId.get(id);
         if (!o) return say(false, `Order #${raw} is not ready for handover — it must be packed first (Packing station), or it was already handed over.`);
         if (inList.has(id)) return say(false, `Order #${id} is already in this handover.`);
@@ -84,11 +101,18 @@ export default function Dispatch({ couriers, orders, errors }: PageProps<{ couri
                             <Field label="Note (optional)"><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Rider name, pickup time…" maxLength={190} /></Field>
                         </div>
                         <div className="flex gap-1 border-t border-slate-100 px-5 pt-4 text-sm">
-                            {([['scan', 'Scan one by one'], ['file', 'Import from Excel / CSV']] as const).map(([k, l]) => (
+                            {([['scan', 'Scan one by one'], ['file', 'Import from Excel / CSV'], ['book', `Book with courier API${unbooked ? ` (${unbooked})` : ''}`]] as const).map(([k, l]) => (
                                 <button key={k} type="button" onClick={() => setMode(k)}
                                     className={`rounded-md px-3 py-1.5 ${mode === k ? 'bg-brand-50 font-semibold text-brand-800' : 'text-slate-600 hover:bg-slate-100'}`}>{l}</button>
                             ))}
                         </div>
+                        {mode === 'book' && <CourierBooking couriers={couriers} api={apiCouriers} />}
+                        {mode === 'scan' && booked.length > 0 && (
+                            <div className="mx-5 mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
+                                <span><b>{booked.length}</b> packed parcels are booked with {couriers[courier]} — scan their labels, or add them all.</span>
+                                <Button type="button" variant="secondary" onClick={() => { setList((l) => [...booked.map((b) => ({ order_id: b.sales_order_id, tracking_id: b.consignment_id })), ...l]); say(true, `Added ${booked.length} booked parcels.`); }}>Add all {booked.length}</Button>
+                            </div>
+                        )}
                         {mode === 'file' && <ParcelImport ready={byId} inList={inList} listTrackings={new Set(list.map((p) => p.tracking_id))} onAdd={addMany} />}
                         {mode === 'scan' && <form onSubmit={addParcel} className="grid gap-3 p-5 sm:grid-cols-[1fr_1.4fr_auto] sm:items-end">
                             <Field label="1. Order #"><Input ref={orderRef} autoFocus value={orderNo} inputMode="numeric" placeholder="Scan / type order no."

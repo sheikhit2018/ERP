@@ -75,6 +75,10 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::get('/courier/pack/order', [CourierController::class, 'packOrder'])->name('pack.order');
         Route::post('/courier/pack', [CourierController::class, 'packStore'])->name('pack.store');
         Route::get('/courier/dispatch', [CourierController::class, 'dispatchPage'])->name('courier.dispatch');
+        Route::post('/courier/book', [CourierController::class, 'book'])->name('courier.book');
+        Route::get('/courier/bookable', [CourierController::class, 'bookable'])->name('courier.bookable');
+        Route::post('/courier/bookings/{booking}/cancel', [CourierController::class, 'cancelBooking'])->whereNumber('booking')->name('courier.booking.cancel');
+        Route::post('/courier/sync', [CourierController::class, 'sync'])->name('courier.sync');
         Route::post('/courier/dispatch', [CourierController::class, 'dispatchStore'])->name('courier.dispatch.store');
         Route::get('/courier/delivered', [CourierController::class, 'deliveredPage'])->name('courier.delivered');
         Route::post('/courier/delivered', [CourierController::class, 'deliveredStore'])->name('courier.delivered.store');
@@ -99,6 +103,7 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
         Route::post('/settings', [SettingsController::class, 'update'])->name('settings.update');
         Route::post('/settings/sms-test', [SettingsController::class, 'smsTest'])->name('settings.sms-test');
+        Route::post('/settings/courier-test', [SettingsController::class, 'courierTest'])->name('settings.courier-test');
         Route::get('/team', [TeamController::class, 'index'])->name('team.index');
         Route::post('/team', [TeamController::class, 'store'])->name('team.store');
         Route::put('/team/{member}', [TeamController::class, 'update'])->whereNumber('member')->name('team.update');

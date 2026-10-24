@@ -29,6 +29,7 @@ export default function CourierHub({ filters, couriers, total, byCourier, batche
                     {isWh && <LinkButton href="/courier/dispatch">Hand over to courier</LinkButton>}
                     {canReturn && <LinkButton variant="secondary" href="/courier/returns">Receive returns</LinkButton>}
                     {isWh && <LinkButton variant="secondary" href="/courier/delivered">Mark delivered</LinkButton>}
+                    {isWh && <Button variant="secondary" onClick={() => router.post('/courier/sync', {}, { preserveScroll: true })}>Sync with couriers</Button>}
                 </>} />
 
             <form onSubmit={apply} className="mb-5 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

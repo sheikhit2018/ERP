@@ -6,6 +6,7 @@ class SalesOrder extends TenantModel {
 public function items() { return $this->hasMany(SalesOrderItem::class); }
 public function shipment() { return $this->hasOne(Shipment::class); }
 public function payments() { return $this->hasMany(OrderPayment::class); }
+public function bookings() { return $this->hasMany(CourierBooking::class); }
 /** Items + delivery charge − discount, in paisa. */
 public function totalMinor(): int {
     $items = (int) $this->items()->sum(\Illuminate\Support\Facades\DB::raw('quantity * unit_price_minor'));

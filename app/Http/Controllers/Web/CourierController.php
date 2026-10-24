@@ -75,8 +75,11 @@ class CourierController extends Controller {
     public function dispatchPage() {
         $orders = SalesOrder::with(['items:id,sales_order_id,quantity'])->where('status', 'packed')->doesntHave('shipment')
             ->oldest('id')->take(1000)->get(['id', 'customer', 'created_at']);
+        $bookings = \App\Models\CourierBooking::whereIn('sales_order_id', $orders->pluck('id'))->where('status', 'booked')
+            ->get(['id', 'sales_order_id', 'courier', 'consignment_id', 'tracking_code', 'cod_minor'])->keyBy('sales_order_id');
         return Inertia::render('Courier/Dispatch', [
-            'couriers' => self::COURIERS,
+            'couriers' => self::COURIERS, 'bookings' => $bookings, 'apiCouriers' => \App\Services\Couriers\CourierApi::enabled(),
+            'unbooked' => SalesOrder::where('status', 'confirmed')->doesntHave('shipment')->whereDoesntHave('bookings', fn ($q) => $q->where('status', 'booked'))->count(),
             'orders' => $orders->map(fn ($o) => ['id' => $o->id, 'name' => $o->customer['name'] ?? '', 'phone' => $o->customer['phone'] ?? '',
                 'address' => $o->customer['address'] ?? '', 'pieces' => (int) $o->items->sum('quantity'), 'created_at' => $o->created_at])->values(),
         ]);
@@ -84,6 +87,31 @@ class CourierController extends Controller {
     public function dispatchStore(Request $r, InventoryService $s) {
         $b = $s->dispatchBatch($r->all(), (int) $r->user()->id);
         return redirect()->route('courier.batch', $b->id)->with('success', "Handover #{$b->id} saved: {$b->parcel_count} parcels, {$b->piece_count} pcs to ".(self::COURIERS[$b->courier] ?? $b->courier).'. Print the manifest for the courier to sign.');
+    }
+
+    /* ---------------- Courier API ---------------- */
+    /** JSON: book up to 50 confirmed / packed orders with a courier's API. */
+    public function book(Request $r, \App\Services\Couriers\CourierApi $api) {
+        $d = $r->validate(['courier' => 'required|in:'.implode(',', array_keys(\App\Services\Couriers\CourierApi::DRIVERS)), 'order_ids' => 'required|array|min:1|max:50', 'order_ids.*' => 'integer']);
+        try { return response()->json(['results' => $api->book($d['courier'], $d['order_ids'], (int) $r->user()->id)]); }
+        catch (\App\Services\Couriers\CourierException $e) { return response()->json(['message' => $e->getMessage()], 422); }
+    }
+    /** Orders that can be booked: confirmed or packed, not shipped, not booked yet. */
+    public function bookable() {
+        $orders = SalesOrder::with('items:id,sales_order_id,quantity')->whereIn('status', ['confirmed', 'packed'])->doesntHave('shipment')
+            ->whereDoesntHave('bookings', fn ($q) => $q->where('status', 'booked'))->oldest('id')->take(500)->get(['id', 'status', 'customer']);
+        return response()->json($orders->map(fn ($o) => ['id' => $o->id, 'status' => $o->status, 'name' => $o->customer['name'] ?? '', 'phone' => $o->customer['phone'] ?? '',
+            'address' => $o->customer['address'] ?? '', 'pieces' => (int) $o->items->sum('quantity')]));
+    }
+    public function cancelBooking(int $booking, \App\Services\Couriers\CourierApi $api) {
+        $api->cancelBooking($booking);
+        return back()->with('success', 'Booking removed from Opryx. Cancel it in the courier panel too.');
+    }
+    public function sync(Request $r, \App\Services\Couriers\CourierApi $api) {
+        $res = $api->sync((int) $r->user()->id, 80);
+        if (!\App\Services\Couriers\CourierApi::enabled()) return back()->with('error', 'No courier API is connected (Settings → Courier API).');
+        return back()->with($res['errors'] && !$res['checked'] ? 'error' : 'success', "Checked {$res['checked']} parcels with the couriers: {$res['delivered']} delivered."
+            .($res['errors'] ? " {$res['errors']} could not be checked ({$res['last_error']})." : ''));
     }
 
     /* ---------------- Packing station ---------------- */
@@ -125,7 +153,7 @@ class CourierController extends Controller {
     public function parcel(Request $r) {
         $t = trim((string) $r->query('tracking', ''));
         abort_if($t === '' || strlen($t) > 120, 422, 'Scan a tracking ID.');
-        $s = Shipment::with(['order.items.product:id,name,color,size,sku,barcode'])->where('tracking_id', $t)
+        $s = Shipment::with(['order.items.product:id,name,color,size,sku,barcode'])->where(fn ($q) => $q->where('tracking_id', $t)->orWhere('alt_tracking', $t))
             ->when(array_key_exists((string) $r->query('courier'), self::COURIERS), fn ($q) => $q->where('courier', $r->query('courier')))->first();
         abort_unless($s, 404, "Tracking $t not found.");
         return response()->json(self::parcelJson($s));
@@ -174,6 +202,7 @@ class CourierController extends Controller {
                 'customer' => $s->order->customer['name'] ?? '', 'phone' => $s->order->customer['phone'] ?? '', 'address' => $s->order->customer['address'] ?? '',
                 'items' => $s->order->items->map(fn ($i) => $i->quantity.' × '.$i->product->label)->implode(', '),
                 'handed_over_at' => $s->handed_over_at, 'delivered_at' => $s->delivered_at, 'returned_at' => $s->returned_at, 'lost_at' => $s->lost_at,
+                'courier_status' => $s->courier_status, 'alt_tracking' => $s->alt_tracking,
             ]),
         ]);
     }

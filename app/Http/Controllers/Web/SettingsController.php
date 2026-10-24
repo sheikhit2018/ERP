@@ -55,4 +55,15 @@ class SettingsController extends Controller {
         [$ok, $err] = \App\Services\Sms::send($d['phone'], 'Opryx test SMS from '.($r->attributes->get('tenant')->name ?? 'your company').'. Your SMS gateway works.');
         return response()->json(['ok' => $ok, 'message' => $ok ? 'Sent. Check the phone.' : "Not sent: $err"], $ok ? 200 : 422);
     }
+
+    /** "Test connection" for a courier API with the saved credentials. */
+    public function courierTest(Request $r) {
+        $c = $r->validate(['courier' => 'required|in:steadfast,pathao,redx'])['courier'];
+        try {
+            $driver = app(\App\Services\Couriers\CourierApi::DRIVERS[$c]);
+            return response()->json(['message' => $driver->test()]);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
 }
