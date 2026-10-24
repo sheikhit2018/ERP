@@ -59,4 +59,41 @@ class Phase2Test extends TestCase {
         $this->post_('/accounts/accounts', ['name' => 'DBBL', 'type' => 'bank', 'opening_minor' => 100000, 'active' => true])->assertSessionHasNoErrors();
         $this->assertSame(100000, collect($this->props('/accounts')['accounts'])->firstWhere('name', 'DBBL')['balance_minor']);
     }
+
+    public function test_suppliers_purchase_partial_receive_weighted_cost_payment_and_due(): void {
+        $this->post_('/raw-materials', ['sku' => 'FAB', 'name' => 'Cotton fabric', 'base_unit' => 'cm', 'opening_stock' => 0])->assertSessionHasNoErrors();
+        $mat = (int) DB::table('raw_materials')->value('id');
+        $this->post_('/suppliers', ['name' => 'Rahman Textile', 'phone' => '01700000000', 'opening_due_minor' => 100000])->assertSessionHasNoErrors();
+        $sup = (int) DB::table('suppliers')->value('id');
+        // 100 shirts @ 200 tk (current cost 300 for 100 in stock) + 5000 cm fabric @ 1 tk.
+        $this->post_('/purchases', ['supplier_id' => $sup, 'order_date' => now()->toDateString(), 'lines' => [
+            ['product_id' => $this->pid, 'quantity' => 100, 'unit_cost_minor' => 20000], ['raw_material_id' => $mat, 'quantity' => 5000, 'unit_cost_minor' => 100]]])->assertRedirect();
+        $po = (int) DB::table('purchase_orders')->value('id');
+        $items = DB::table('purchase_items')->orderBy('id')->pluck('id')->all();
+        $this->post_('/purchases', ['supplier_id' => $sup, 'order_date' => now()->toDateString(), 'lines' => [['product_id' => $this->pid, 'raw_material_id' => $mat, 'quantity' => 1, 'unit_cost_minor' => 1]]])
+            ->assertSessionHasErrors('inventory');
+        // Partial receive: 60 shirts + all fabric; replay is safe; over-receiving refused.
+        $key = (string) Str::uuid();
+        $rec = ['idempotency_key' => $key, 'received_on' => now()->toDateString(), 'lines' => [['item_id' => $items[0], 'quantity' => 60], ['item_id' => $items[1], 'quantity' => 5000]]];
+        $this->post_("/purchases/$po/receive", $rec)->assertSessionHasNoErrors();
+        $this->post_("/purchases/$po/receive", $rec)->assertSessionHasNoErrors();
+        $this->assertSame('partial', DB::table('purchase_orders')->value('status'));
+        $this->assertSame(160, (int) DB::table('finished_good_stocks')->where('product_id', $this->pid)->value('available_stock'));
+        $this->assertSame(5000, (int) DB::table('raw_material_stocks')->value('quantity'));
+        $this->assertSame(intdiv(30000 * 100 + 20000 * 60, 160), (int) DB::table('products')->where('id', $this->pid)->value('cost_minor')); // weighted average
+        $this->post_("/purchases/$po/receive", ['idempotency_key' => (string) Str::uuid(), 'received_on' => now()->toDateString(), 'lines' => [['item_id' => $items[0], 'quantity' => 41]]])->assertSessionHasErrors('inventory');
+        $this->post_("/purchases/$po/receive", ['idempotency_key' => (string) Str::uuid(), 'received_on' => now()->toDateString(), 'lines' => [['item_id' => $items[0], 'quantity' => 40]]])->assertSessionHasNoErrors();
+        $this->assertSame('received', DB::table('purchase_orders')->value('status'));
+        $this->post_("/purchases/$po/cancel")->assertSessionHasErrors('inventory');
+        // Due = 1000 opening + 20000 (shirts) + 5000 (fabric) = 26000 tk; pay 10000 from Bank.
+        $this->get_('/accounts');
+        $this->post_("/suppliers/$sup/pay", ['money_account_id' => $this->acc('Bank'), 'amount_minor' => 1000000, 'entry_date' => now()->toDateString(), 'reference' => 'CHQ-1'])->assertSessionHasNoErrors();
+        $p = $this->props("/suppliers/$sup");
+        $this->assertSame([2500000, 1000000, 1600000], [$p['due']['received'], $p['due']['paid'], $p['due']['due']]);
+        $this->assertSame(1600000, $this->props('/suppliers')['suppliers'][0]['due']);
+        $this->assertSame(-1000000, collect($this->props('/accounts')['accounts'])->firstWhere('name', 'Bank')['balance_minor']);
+        // Supplier payment is not an expense in P&L.
+        $this->assertSame(0, $this->props('/accounts?tab=pl')['pl']['expense_total']);
+        $this->get_('/purchases')->assertOk(); $this->get_('/purchases/create')->assertOk(); $this->get_("/purchases/$po")->assertOk();
+    }
 }

@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Web\{AccountsController, CodController, OrderImportController, SettingsController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
+use App\Http\Controllers\Web\{AccountsController, PurchaseController, CodController, OrderImportController, SettingsController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
     RawMaterialController, ReturnPageController, SalesOrderController, StockLedgerController, TeamController};
 use App\Http\Controllers\CourierReturnController;
 use Illuminate\Support\Facades\Route;
@@ -28,6 +28,19 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::post('/stock-in', [StockInController::class, 'store'])->name('stockin.store');
     });
 
+    // Suppliers & purchases (warehouse receives goods; paying suppliers needs the owner).
+    Route::middleware('tenant.role:warehouse,manufacturer')->group(function () {
+        Route::get('/purchases', [PurchaseController::class, 'index'])->name('purchases.index');
+        Route::get('/purchases/create', [PurchaseController::class, 'create'])->name('purchases.create');
+        Route::post('/purchases', [PurchaseController::class, 'store'])->name('purchases.store');
+        Route::get('/purchases/{purchase}', [PurchaseController::class, 'show'])->whereNumber('purchase')->name('purchases.show');
+        Route::post('/purchases/{purchase}/receive', [PurchaseController::class, 'receive'])->whereNumber('purchase')->name('purchases.receive');
+        Route::post('/purchases/{purchase}/cancel', [PurchaseController::class, 'cancel'])->whereNumber('purchase')->name('purchases.cancel');
+        Route::get('/suppliers', [PurchaseController::class, 'suppliers'])->name('suppliers.index');
+        Route::post('/suppliers', [PurchaseController::class, 'saveSupplier'])->name('suppliers.save');
+        Route::get('/suppliers/{supplier}', [PurchaseController::class, 'supplier'])->whereNumber('supplier')->name('suppliers.show');
+    });
+    Route::middleware('tenant.role:owner')->post('/suppliers/{supplier}/pay', [PurchaseController::class, 'pay'])->whereNumber('supplier')->name('suppliers.pay');
     Route::middleware('tenant.role:manufacturer,warehouse')->group(function () {
         Route::get('/raw-materials', [RawMaterialController::class, 'index'])->name('materials.index');
         Route::post('/raw-materials', [RawMaterialController::class, 'store'])->name('materials.store');

@@ -20,7 +20,7 @@ export function uuid(): string {
 export const STATUS_LABEL: Record<string, string> = {
     pending: 'Pending', confirmed: 'Confirmed', packed: 'Packed', partial_delivered: 'Partly delivered', returned_short: 'Returned (pieces missing)', shipped: 'Shipped', delivered: 'Delivered',
     return_pending: 'Return pending', returned: 'Returned', return_damaged: 'Returned (damaged)', cancelled: 'Cancelled', lost: 'Lost by courier',
-    passed: 'QC passed', damaged: 'Damaged', completed: 'Completed',
+    passed: 'QC passed', ordered: 'Ordered', partial: 'Partly received', received: 'Received', damaged: 'Damaged', completed: 'Completed',
 };
 const STATUS_TONE: Record<string, string> = {
     pending: 'bg-amber-50 text-amber-800 ring-amber-200', confirmed: 'bg-sky-50 text-sky-800 ring-sky-200', packed: 'bg-indigo-50 text-indigo-800 ring-indigo-200',
@@ -28,7 +28,7 @@ const STATUS_TONE: Record<string, string> = {
     shipped: 'bg-violet-50 text-violet-800 ring-violet-200', delivered: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
     return_pending: 'bg-orange-50 text-orange-800 ring-orange-200', returned: 'bg-slate-100 text-slate-700 ring-slate-200',
     return_damaged: 'bg-rose-50 text-rose-800 ring-rose-200', cancelled: 'bg-slate-100 text-slate-500 ring-slate-200', lost: 'bg-rose-100 text-rose-900 ring-rose-300',
-    passed: 'bg-emerald-50 text-emerald-800 ring-emerald-200', damaged: 'bg-rose-50 text-rose-800 ring-rose-200',
+    passed: 'bg-emerald-50 text-emerald-800 ring-emerald-200', ordered: 'bg-sky-50 text-sky-800 ring-sky-200', partial: 'bg-amber-50 text-amber-800 ring-amber-200', received: 'bg-emerald-50 text-emerald-800 ring-emerald-200', damaged: 'bg-rose-50 text-rose-800 ring-rose-200',
     completed: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
 };
 export const statusTone = (s: string) => STATUS_TONE[s] ?? 'bg-slate-100 text-slate-700 ring-slate-200';
