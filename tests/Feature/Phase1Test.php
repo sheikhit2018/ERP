@@ -128,4 +128,62 @@ class Phase1Test extends TestCase {
             $this->assertStringStartsWith("\xEF\xBB\xBF", $r->streamedContent());
         }
     }
+
+    public function test_excel_order_import_and_store_webhooks_with_inbox_retry(): void {
+        $sku = DB::table('products')->value('sku'); $bc = DB::table('products')->value('barcode');
+        $rows = [
+            ['line' => 2, 'ref' => 'A1', 'name' => 'Karim', 'phone' => '01711000000', 'address' => 'Mirpur', 'code' => $sku, 'qty' => 2, 'delivery' => 6000],
+            ['line' => 3, 'ref' => 'A1', 'name' => 'Karim', 'phone' => '01711000000', 'address' => 'Mirpur', 'code' => $bc, 'qty' => 1],
+            ['line' => 4, 'ref' => 'A2', 'name' => 'Rahima', 'phone' => '01811000000', 'address' => 'Agrabad', 'code' => 'NOPE', 'qty' => 1],
+            ['line' => 5, 'name' => 'Salma', 'phone' => '01911000000', 'address' => 'Sylhet', 'code' => strtolower($sku), 'qty' => 1, 'price' => 45000, 'discount' => 5000],
+        ];
+        $this->post_('/orders/import', ['status' => 'confirmed', 'rows' => $rows])->assertSessionHas('success')
+            ->assertSessionHas('report', fn ($r) => count($r) === 1 && str_contains($r[0], 'NOPE'));
+        $this->assertSame(2, DB::table('sales_orders')->count());
+        $a = DB::table('sales_orders')->where('customer_phone', '01711000000')->first();
+        $this->assertSame([3, 6000, 'confirmed'], [(int) DB::table('sales_order_items')->where('sales_order_id', $a->id)->sum('quantity'), (int) $a->delivery_charge_minor, $a->status]);
+        $this->post_('/orders/import', ['status' => 'confirmed', 'rows' => $rows]); // same file again
+        $this->assertSame(2, DB::table('sales_orders')->count());
+        $this->assertSame(500 - 3 - 1, (int) DB::table('finished_good_stocks')->value('available_stock'));
+
+        // WooCommerce: secret is generated on the Settings page; forged signature rejected.
+        $secret = $this->get_('/settings')->assertOk()->viewData('page')['props']['woo']['secret'];
+        $this->assertSame(40, strlen($secret));
+        $woo = ['id' => 777, 'number' => '777', 'status' => 'processing', 'payment_method' => 'cod', 'total' => '1060.00', 'shipping_total' => '60.00', 'discount_total' => '0.00',
+            'billing' => ['first_name' => 'Nadia', 'last_name' => 'Islam', 'phone' => '+8801712345678', 'address_1' => 'Road 5', 'city' => 'Dhaka'],
+            'shipping' => ['first_name' => 'Nadia', 'last_name' => 'Islam', 'address_1' => 'House 9, Road 5', 'city' => 'Dhanmondi'],
+            'line_items' => [['sku' => $sku, 'quantity' => 2, 'price' => 500]], 'customer_note' => 'Call before'];
+        $send = fn (string $url, array $body, string $header, string $key) => $this->call('POST', $this->base.$url, [], [], [],
+            ['CONTENT_TYPE' => 'application/json', 'HTTP_'.strtoupper(str_replace('-', '_', $header)) => base64_encode(hash_hmac('sha256', json_encode($body), $key, true))], json_encode($body));
+        $send('/api/hooks/woocommerce', $woo, 'X-WC-Webhook-Signature', 'wrong')->assertStatus(401);
+        $this->assertSame(2, DB::table('sales_orders')->count());
+        $send('/api/hooks/woocommerce', $woo, 'X-WC-Webhook-Signature', $secret)->assertOk()->assertJsonPath('status', 'imported');
+        $send('/api/hooks/woocommerce', $woo, 'X-WC-Webhook-Signature', $secret)->assertOk(); // duplicate delivery
+        $w = DB::table('sales_orders')->where('customer_phone', '01712345678')->first();
+        $this->assertSame(['pending', 'website', 6000], [$w->status, $w->source, (int) $w->delivery_charge_minor]);
+        $this->assertSame(3, DB::table('sales_orders')->count());
+        $this->post($this->base.'/api/hooks/woocommerce', ['webhook_id' => 5])->assertOk(); // WooCommerce ping
+
+        // Shopify: not configured -> 404; paid order with unknown SKU -> inbox failed -> fix SKU -> retry imports with payment.
+        $shop = ['id' => 9001, 'name' => '#1001', 'financial_status' => 'paid', 'total_price' => '500.00', 'total_discounts' => '0.00', 'shipping_lines' => [],
+            'payment_gateway_names' => ['bkash'], 'shipping_address' => ['name' => 'Tania', 'phone' => '01612345678', 'address1' => 'Uttara', 'city' => 'Dhaka'],
+            'line_items' => [['sku' => 'NEW-SKU', 'quantity' => 1, 'price' => '500.00']]];
+        $send('/api/hooks/shopify', $shop, 'X-Shopify-Hmac-Sha256', 'k')->assertNotFound();
+        $this->post_('/settings', ['secrets' => ['store.shopify_secret' => 'shpss_test'], 'values' => ['orders.web_status' => 'confirmed']])->assertSessionHasNoErrors();
+        $send('/api/hooks/shopify', $shop, 'X-Shopify-Hmac-Sha256', 'shpss_test')->assertOk()->assertJsonPath('status', 'failed');
+        $in = DB::table('incoming_orders')->where('source', 'shopify')->first();
+        $this->assertStringContainsString('NEW-SKU', $in->error);
+        DB::table('products')->update(['sku' => 'NEW-SKU']);
+        $this->post_("/orders/import/{$in->id}/retry")->assertSessionHas('success');
+        $sh = DB::table('sales_orders')->where('customer_phone', '01612345678')->first();
+        $this->assertSame('confirmed', $sh->status);
+        $this->assertSame([50000, 'bkash'], [(int) DB::table('order_payments')->where('sales_order_id', $sh->id)->value('amount_minor'), DB::table('order_payments')->where('sales_order_id', $sh->id)->value('method')]);
+        $this->get_('/orders/import')->assertOk()->assertInertia(fn ($p) => $p->has('inbox', 2)->where('failed', 0));
+
+        // Settings never send saved secrets back.
+        $res = $this->get_('/settings')->assertOk()->assertDontSee('shpss_test');
+        $props = $res->viewData('page')['props'];
+        $this->assertTrue($props['secrets']['store.shopify_secret']);
+        $this->assertArrayNotHasKey('store.shopify_secret', $props['values']);
+    }
 }

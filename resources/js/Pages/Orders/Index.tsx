@@ -21,7 +21,7 @@ export default function Orders({ orders, filters, statuses, role, risk }: PagePr
         <AuthenticatedLayout>
             <Head title="Orders" />
             <PageHeader title="Orders" subtitle="Every order reserves stock the moment it is saved — no overselling."
-                actions={canCreate ? <LinkButton href="/orders/create">+ New order</LinkButton> : undefined} />
+                actions={canCreate ? <><LinkButton variant="secondary" href="/orders/import">Import (Excel / website)</LinkButton><LinkButton href="/orders/create">+ New order</LinkButton></> : undefined} />
             <Card>
                 <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 p-4">
                     <div className="flex flex-wrap gap-1">

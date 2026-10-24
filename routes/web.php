@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Web\{CodController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
+use App\Http\Controllers\Web\{CodController, OrderImportController, SettingsController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
     RawMaterialController, ReturnPageController, SalesOrderController, StockLedgerController, TeamController};
 use App\Http\Controllers\CourierReturnController;
 use Illuminate\Support\Facades\Route;
@@ -52,6 +52,9 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::get('/cod/import', [CodController::class, 'importPage'])->name('cod.import');
         Route::post('/cod/import', [CodController::class, 'importStore'])->name('cod.import.store');
         Route::post('/orders/{order}/payments', [CodController::class, 'payment'])->whereNumber('order')->name('orders.payments');
+        Route::get('/orders/import', [OrderImportController::class, 'index'])->name('orders.import');
+        Route::post('/orders/import', [OrderImportController::class, 'store'])->name('orders.import.store');
+        Route::post('/orders/import/{incoming}/retry', [OrderImportController::class, 'retry'])->whereNumber('incoming')->name('orders.import.retry');
         Route::get('/orders/create', [SalesOrderController::class, 'create'])->name('orders.create');
         Route::post('/orders', [SalesOrderController::class, 'store'])->name('orders.store');
         Route::post('/orders/{order}/confirm', [SalesOrderController::class, 'confirm'])->whereNumber('order')->name('orders.confirm');
@@ -93,6 +96,8 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
     });
 
     Route::middleware('tenant.role:owner')->group(function () {
+        Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
+        Route::post('/settings', [SettingsController::class, 'update'])->name('settings.update');
         Route::get('/team', [TeamController::class, 'index'])->name('team.index');
         Route::post('/team', [TeamController::class, 'store'])->name('team.store');
         Route::put('/team/{member}', [TeamController::class, 'update'])->whereNumber('member')->name('team.update');
