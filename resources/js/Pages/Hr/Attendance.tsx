@@ -22,7 +22,7 @@ export default function Attendance({ date, employees, marks, summary }: PageProp
             <PageHeader title="Daily attendance" subtitle={`Month so far: ${summary.present ?? 0} present · ${summary.absent ?? 0} absent · ${summary.half ?? 0} half · ${summary.leave ?? 0} leave (staff-days)`}
                 actions={<LinkButton variant="secondary" href="/hr/employees">Staff</LinkButton>} />
             <div className="mb-4 flex flex-wrap items-center gap-3">
-                <Input type="date" className="!w-44" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => router.get('/hr/attendance', { date: e.target.value }, { preserveState: false })} />
+                <Input type="date" className="!w-44" value={date} max={new Date().toLocaleDateString('en-CA')} onChange={(e) => router.get('/hr/attendance', { date: e.target.value }, { preserveState: false })} />
                 <Button variant="secondary" onClick={() => all('present')}>Mark everyone present</Button>
                 <span className="text-sm text-slate-500">{count('present')} present · {count('half')} half · {count('leave')} leave · {count('absent')} absent{unmarked ? ` · ${unmarked} not marked` : ''}</span>
             </div>

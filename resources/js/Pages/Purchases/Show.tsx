@@ -11,7 +11,7 @@ type PO = { id: number; status: string; order_date: string; expected_date: strin
 export default function ShowPurchase({ po }: PageProps<{ po: PO }>) {
     const key = useRef(uuid());
     const open = ['ordered', 'partial'].includes(po.status);
-    const f = useForm<{ qty: Record<number, string>; received_on: string; note: string }>({ qty: Object.fromEntries(po.items.map((i) => [i.id, String(i.quantity - i.received_quantity)])), received_on: new Date().toISOString().slice(0, 10), note: '' });
+    const f = useForm<{ qty: Record<number, string>; received_on: string; note: string }>({ qty: Object.fromEntries(po.items.map((i) => [i.id, String(i.quantity - i.received_quantity)])), received_on: new Date().toLocaleDateString('en-CA'), note: '' });
     const label = (i: Item) => i.product ? `${i.product.name}${i.product.color || i.product.size ? ` — ${[i.product.color, i.product.size].filter(Boolean).join(' / ')}` : ''}` : `${i.material?.name} (per ${i.material?.base_unit})`;
     const total = po.items.reduce((a, i) => a + i.quantity * i.unit_cost_minor, 0), recv = po.items.reduce((a, i) => a + i.received_quantity * i.unit_cost_minor, 0);
     return (

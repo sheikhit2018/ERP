@@ -68,7 +68,7 @@ export default function Reports({ tab, filters, data, couriers }: PageProps<Prop
 
             {tab === 'profit' && <>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <Tile label="Delivered sales" value={taka(data.revenue)} sub={`${num(data.delivered_orders)} delivered · ${num(data.partial_orders)} partial`} />
+                    <Tile label="Sales (delivered + POS)" value={taka(data.revenue)} sub={`${num(data.delivered_orders)} delivered · ${num(data.partial_orders)} partial${data.pos_sales ? ` · ${num(data.pos_sales)} POS` : ""}`} />
                     <Tile label="Gross profit" value={taka(data.gross_profit)} sub={data.margin !== null ? `${data.margin}% margin` : ''} tone={data.gross_profit < 0 ? 'text-rose-600' : 'text-emerald-700'} />
                     <Tile label="Return losses" value={taka(data.damaged_cost + data.lost_cost)} sub="damaged + lost / missing, at cost" tone="text-rose-600" />
                     <Tile label="Profit after losses" value={taka(data.net_after_losses)} tone={data.net_after_losses < 0 ? 'text-rose-600' : 'text-emerald-800'} />

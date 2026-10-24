@@ -10,7 +10,7 @@ type Props = { supplier: { id: number; name: string; phone: string | null; addre
     due: { received: number; paid: number; due: number }; purchases: P[]; payments: Pay[]; accounts: { id: number; name: string }[] };
 
 export default function Supplier({ supplier: s, due, purchases, payments, accounts, role }: PageProps<Props>) {
-    const pay = useForm({ money_account_id: String(accounts[0]?.id ?? ''), amount: '', entry_date: new Date().toISOString().slice(0, 10), reference: '' });
+    const pay = useForm({ money_account_id: String(accounts[0]?.id ?? ''), amount: '', entry_date: new Date().toLocaleDateString('en-CA'), reference: '' });
     const edit = useForm({ id: s.id, name: s.name, phone: s.phone ?? '', address: s.address ?? '', opening: String(s.opening_due_minor / 100), active: s.active });
     return (
         <AuthenticatedLayout>

@@ -17,7 +17,7 @@ const COLUMNS: Column[] = [
 export default function CodImport({ couriers }: PageProps<{ couriers: Record<string, string> }>) {
     const [courier, setCourier] = useState('steadfast');
     const [reference, setReference] = useState('');
-    const [paidOn, setPaidOn] = useState(new Date().toISOString().slice(0, 10));
+    const [paidOn, setPaidOn] = useState(new Date().toLocaleDateString('en-CA'));
     const [markDelivered, setMarkDelivered] = useState(true);
     const [busy, setBusy] = useState(false);
     const key = useRef(uuid());

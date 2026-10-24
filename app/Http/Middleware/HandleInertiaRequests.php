@@ -41,6 +41,7 @@ class HandleInertiaRequests extends Middleware
                 'success' => fn () => $request->session()->get('success'),
                 'report' => fn () => $request->session()->get('report'),
                 'error' => fn () => $request->session()->get('error'),
+                'pos_sale' => fn () => $request->session()->get('pos_sale'),
             ],
             'appName' => config('app.name'),
         ];

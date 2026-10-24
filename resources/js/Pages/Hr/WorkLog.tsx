@@ -35,7 +35,7 @@ export default function WorkLog({ date, stages, employees, styles, logs, month, 
                 <div className="lg:col-span-2 space-y-6">
                     <Card title="Add today's output">
                         <div className="grid gap-3 p-5 sm:grid-cols-3">
-                            <Field label="Date"><Input type="date" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => router.get('/hr/work', { date: e.target.value })} /></Field>
+                            <Field label="Date"><Input type="date" value={date} max={new Date().toLocaleDateString('en-CA')} onChange={(e) => router.get('/hr/work', { date: e.target.value })} /></Field>
                             <Field label="Stage" hint={st ? `${taka(st.rate_minor)} per piece` : undefined}><Select value={stage} onChange={(e) => setStage(e.target.value)}>{active.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></Field>
                             <Field label="Style (optional)"><Select value={style} onChange={(e) => setStyle(e.target.value)}><option value="">—</option>{styles.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></Field>
                         </div>

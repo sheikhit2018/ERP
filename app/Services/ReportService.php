@@ -55,10 +55,15 @@ class ReportService {
             ->whereBetween('inventory_movements.created_at', [$this->from, $this->to])->where('inventory_movements.bucket', 'damaged_stock')->where('inventory_movements.delta', '>', 0)
             ->sum(DB::raw('inventory_movements.delta * p.cost_minor'));
         $lost = $lossQ('courier_lost') + $lossQ('courier_short');
-        $revenue = (int) $delivered->revenue + $pRevenue; $cogs = (int) $delivered->cost + $pCost;
-        $gross = $revenue + (int) $delivered->delivery - (int) $delivered->discount - $cogs - $charges;
-        return ['delivered_orders' => (int) $delivered->n, 'partial_orders' => $partial->count(), 'revenue' => $revenue, 'delivery_income' => (int) $delivered->delivery,
-            'discount' => (int) $delivered->discount, 'cogs' => $cogs, 'courier_charges' => $charges, 'gross_profit' => $gross,
+        // Counter (POS) sales are complete at the till.
+        $pos = $this->q('pos_sales')->where('status', 'paid')->whereBetween('created_at', [$this->from, $this->to])
+            ->selectRaw('count(*) as n, coalesce(sum(subtotal_minor),0) as sub, coalesce(sum(discount_minor),0) as disc, coalesce(sum(cost_minor),0) as cost')->first();
+        $revenue = (int) $delivered->revenue + $pRevenue + (int) $pos->sub; $cogs = (int) $delivered->cost + $pCost + (int) $pos->cost;
+        $discount = (int) $delivered->discount + (int) $pos->disc;
+        $gross = $revenue + (int) $delivered->delivery - $discount - $cogs - $charges;
+        return ['delivered_orders' => (int) $delivered->n, 'partial_orders' => $partial->count(), 'pos_sales' => (int) $pos->n, 'pos_revenue' => (int) $pos->sub - (int) $pos->disc,
+            'revenue' => $revenue, 'delivery_income' => (int) $delivered->delivery,
+            'discount' => $discount, 'cogs' => $cogs, 'courier_charges' => $charges, 'gross_profit' => $gross,
             'damaged_cost' => $damaged, 'lost_cost' => $lost, 'net_after_losses' => $gross - $damaged - $lost,
             'margin' => $revenue ? round(100 * $gross / $revenue, 1) : null];
     }

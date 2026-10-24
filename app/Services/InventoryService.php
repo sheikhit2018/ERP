@@ -8,14 +8,14 @@ use Illuminate\Validation\ValidationException;
 
 /** All stock and catalog/BOM writers must acquire the tenant mutex first. */
 class InventoryService {
-    private function transaction(callable $fn): mixed {
+    protected function transaction(callable $fn): mixed {
         return DB::transaction(function () use ($fn) {
             $tenant = DB::table('tenants')->where('id', app(TenantContext::class)->id())->lockForUpdate()->first();
             abort_unless($tenant && $tenant->active, 403, 'Inactive tenant.');
             return $fn();
         }, 5);
     }
-    private function fail(string $message): never {
+    protected function fail(string $message): never {
         throw ValidationException::withMessages(['inventory' => [$message]]);
     }
     /** Normalise scanned items [{product_id, quantity}] to [product_id => qty]; null = no scan verification. */
@@ -37,26 +37,36 @@ class InventoryService {
         }
         $this->fail('Scanned items do not match the order. '.implode('; ', $diff));
     }
-    private function hash(array $data): string { return hash('sha256', json_encode($data, JSON_THROW_ON_ERROR)); }
-    private function replay($model, string $hash) {
+    protected function hash(array $data): string { return hash('sha256', json_encode($data, JSON_THROW_ON_ERROR)); }
+    protected function replay($model, string $hash) {
         abort_unless(hash_equals($model->request_hash, $hash), 409, 'Idempotency key reused with a different request.');
         return $model;
     }
-    private function stock(int $id): FinishedGoodStock {
+    protected function stock(int $id): FinishedGoodStock {
         $stock = FinishedGoodStock::where('product_id', $id)->lockForUpdate()->first();
         if (!$stock) $this->fail("No finished-good stock row for product $id.");
         return $stock;
     }
-    private function movement(?int $product, ?int $material, string $bucket, int $delta, string $reason, string $reference, int $actor): void {
+    protected function movement(?int $product, ?int $material, string $bucket, int $delta, string $reason, string $reference, int $actor): void {
         InventoryMovement::create(['product_id'=>$product, 'raw_material_id'=>$material,
             'bucket'=>$bucket, 'delta'=>$delta, 'reason'=>$reason, 'reference'=>$reference, 'actor_id'=>$actor]);
     }
-    private function move(FinishedGoodStock $s, string $bucket, int $delta, string $reason, string $ref, int $actor): void {
+    protected function move(FinishedGoodStock $s, string $bucket, int $delta, string $reason, string $ref, int $actor): void {
         if (!in_array($bucket, ['available_stock','reserved_stock','transit_stock','damaged_stock'], true)) throw new \LogicException('Invalid bucket');
         $current = (int)$s->$bucket;
         if (($delta < 0 && $current < -$delta) || ($delta > 0 && $current > PHP_INT_MAX - $delta)) $this->fail("Insufficient/overflowing $bucket for product {$s->product_id}.");
         $s->$bucket = $current + $delta; $s->save();
         $this->movement((int)$s->product_id, null, $bucket, $delta, $reason, $ref, $actor);
+    }
+    /** Stock sitting in shops / outlets must stay covered: available (main + elsewhere) can't fall below what is held elsewhere. */
+    protected function assertMainCovers(int $productId): void {
+        $held = (int) DB::table('location_stocks')->where('tenant_id', app(TenantContext::class)->id())->where('product_id', $productId)->sum('quantity');
+        if ($held === 0) return;
+        $avail = (int) FinishedGoodStock::where('product_id', $productId)->value('available_stock');
+        if ($avail < $held) {
+            $sku = Product::whereKey($productId)->value('sku') ?? "#$productId";
+            $this->fail("Not enough $sku in the main warehouse — $held pcs are at shops / outlets. Transfer them back first.");
+        }
     }
     public function manufacture(array $data, int $actor): ManufacturingOrder {
         $d = Validator::make($data, ['bom_id'=>'required|integer|min:1', 'quantity'=>'required|integer|min:1|max:1000000000', 'idempotency_key'=>'required|uuid'])->validate();
@@ -118,6 +128,7 @@ class InventoryService {
                 SalesOrderItem::create($item + ['sales_order_id'=>$order->id, 'unit_cost_minor'=>(int) Product::whereKey($item['product_id'])->value('cost_minor')]);
                 $this->move($s, 'available_stock', -$item['quantity'], 'reserve', "ORDER:$order->id", $actor);
                 $this->move($s, 'reserved_stock', $item['quantity'], 'reserve', "ORDER:$order->id", $actor);
+                $this->assertMainCovers($item['product_id']);
             }
             if ($order->status === 'confirmed') Sms::orderEvent($order->id, 'confirmed');
             return $order;
@@ -290,6 +301,7 @@ class InventoryService {
             $s = $this->stock($id);
             $ref = 'ADJ'.(!empty($d['note']) ? ':'.$d['note'] : '');
             $this->move($s, 'available_stock', (int)$d['delta'], $d['reason'], substr($ref, 0, 100), $actor);
+            if ((int)$d['delta'] < 0) $this->assertMainCovers($id);
             return $s;
         });
     }

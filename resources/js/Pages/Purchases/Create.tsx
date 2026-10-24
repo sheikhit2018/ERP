@@ -11,7 +11,7 @@ type Line = { key: string; qty: string; cost: string };
 
 export default function CreatePurchase({ suppliers, products, materials }: PageProps<{ suppliers: { id: number; name: string }[]; products: Prod[]; materials: Mat[] }>) {
     const [lines, setLines] = useState<Line[]>([{ key: '', qty: '', cost: '' }]);
-    const f = useForm({ supplier_id: String(suppliers[0]?.id ?? ''), order_date: new Date().toISOString().slice(0, 10), expected_date: '', note: '' });
+    const f = useForm({ supplier_id: String(suppliers[0]?.id ?? ''), order_date: new Date().toLocaleDateString('en-CA'), expected_date: '', note: '' });
     const e = f.errors as Record<string, string>;
     const options = [...products.map((p) => [`p${p.id}`, `${p.name}${p.color || p.size ? ` — ${[p.color, p.size].filter(Boolean).join(' / ')}` : ''} (${p.sku})`] as const),
         ...materials.map((m) => [`m${m.id}`, `Material: ${m.name} (${m.sku}, per ${m.base_unit})`] as const)];

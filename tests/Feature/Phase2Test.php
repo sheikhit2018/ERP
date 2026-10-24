@@ -140,4 +140,63 @@ class Phase2Test extends TestCase {
         $this->delete($this->base.'/hr/work/'.DB::table('work_logs')->value('id'))->assertSessionHas('error');
         $this->assertSame(2, DB::table('work_logs')->count());
     }
+
+    public function test_locations_transfer_pos_void_and_stock_count(): void {
+        $m = (int) DB::table('products')->where('size', 'M')->value('id'); // L=100, M=50 available
+        $this->props('/locations');
+        $this->post_('/locations', ['name' => 'Dhanmondi shop', 'type' => 'shop'])->assertSessionHasNoErrors();
+        $main = (int) DB::table('locations')->where('is_main', true)->value('id'); $shop = (int) DB::table('locations')->where('name', 'Dhanmondi shop')->value('id');
+        $tr = fn ($from, $to, $items) => $this->post_('/transfers', ['idempotency_key' => (string) Str::uuid(), 'from_location_id' => $from, 'to_location_id' => $to, 'items' => $items]);
+        $tr($main, $shop, [['product_id' => $this->pid, 'quantity' => 30], ['product_id' => $m, 'quantity' => 60]])->assertSessionHasErrors('inventory');
+        $tr($main, $shop, [['product_id' => $this->pid, 'quantity' => 30], ['product_id' => $m, 'quantity' => 10]])->assertSessionHasNoErrors();
+        $locs = collect($this->props('/locations')['locations'])->keyBy('name');
+        $this->assertSame([110, 40], [$locs['Main warehouse']['pieces'], $locs['Dhanmondi shop']['pieces']]);
+        $this->assertSame(100, (int) DB::table('finished_good_stocks')->where('product_id', $this->pid)->value('available_stock')); // total unchanged
+        // Online order can't use shop stock: L main = 70.
+        $order = fn ($q) => $this->post_('/orders', ['idempotency_key' => (string) Str::uuid(), 'status' => 'confirmed', 'customer' => ['name' => 'K', 'phone' => '01711000000', 'address' => 'Dhaka'],
+            'items' => [['product_id' => $this->pid, 'quantity' => $q, 'unit_price_minor' => 50000]]]);
+        $order(71)->assertSessionHasErrors('inventory');
+        $order(70)->assertSessionHasNoErrors();
+
+        // POS at the shop: 3 × L @ 500, discount 100, cash 2000 -> total 1400.
+        $sale = ['idempotency_key' => (string) Str::uuid(), 'location_id' => $shop, 'method' => 'cash', 'discount_minor' => 10000, 'tendered_minor' => 200000,
+            'items' => [['product_id' => $this->pid, 'quantity' => 3, 'unit_price_minor' => 50000]]];
+        $this->post_('/pos', $sale)->assertSessionHasNoErrors()->assertSessionHas('pos_sale');
+        $this->post_('/pos', $sale)->assertSessionHasNoErrors(); // replay
+        $this->assertSame(1, DB::table('pos_sales')->count());
+        $this->post_('/pos', ['idempotency_key' => (string) Str::uuid(), 'location_id' => $shop, 'method' => 'cash', 'items' => [['product_id' => $this->pid, 'quantity' => 28, 'unit_price_minor' => 1]]])->assertSessionHasErrors('inventory');
+        $sid = (int) DB::table('pos_sales')->value('id');
+        $this->assertSame(27, (int) DB::table('location_stocks')->where('location_id', $shop)->where('product_id', $this->pid)->value('quantity'));
+        $this->assertSame(140000, collect($this->props('/accounts')['accounts'])->firstWhere('name', 'Cash')['balance_minor']);
+        $this->props("/pos/$sid/receipt");
+        $pl = $this->props('/reports?tab=profit')['data'];
+        $this->assertSame([1, 140000], [$pl['pos_sales'], $pl['pos_revenue']]);
+        // Void: stock back to the shop, cash reversed.
+        $this->post_("/pos/$sid/void")->assertSessionHasNoErrors();
+        $this->assertSame(30, (int) DB::table('location_stocks')->where('location_id', $shop)->where('product_id', $this->pid)->value('quantity'));
+        $this->assertSame(0, collect($this->props('/accounts')['accounts'])->firstWhere('name', 'Cash')['balance_minor']);
+
+        // Count the shop: L counted 28 (2 short), M counted 12 (+2). Approve adjusts shop + total.
+        $this->post_('/stock-counts', ['location_id' => $shop])->assertRedirect();
+        $cid = (int) DB::table('stock_counts')->value('id');
+        $this->post_('/stock-counts', ['location_id' => $shop])->assertSessionHasErrors('inventory');
+        $this->post_("/stock-counts/$cid/lines", ['mode' => 'set', 'counts' => [['product_id' => $this->pid, 'counted' => 27]]]);
+        $this->post_("/stock-counts/$cid/lines", ['mode' => 'add', 'counts' => [['product_id' => $this->pid, 'counted' => 1], ['product_id' => $m, 'counted' => 12]]]);
+        $p = collect($this->props("/stock-counts/$cid")['products'])->keyBy('id');
+        $this->assertSame([30, 28, 10, 12], [$p[$this->pid]['system'], $p[$this->pid]['counted'], $p[$m]['system'], $p[$m]['counted']]);
+        $this->post_("/stock-counts/$cid/approve")->assertSessionHasNoErrors();
+        $this->assertSame([28, 12], [(int) DB::table('location_stocks')->where('location_id', $shop)->where('product_id', $this->pid)->value('quantity'),
+            (int) DB::table('location_stocks')->where('location_id', $shop)->where('product_id', $m)->value('quantity')]);
+        // L total: 100 - 70 reserved - 2 short = 28 available; M: 50 + 2 = 52.
+        $this->assertSame([28, 52], [(int) DB::table('finished_good_stocks')->where('product_id', $this->pid)->value('available_stock'), (int) DB::table('finished_good_stocks')->where('product_id', $m)->value('available_stock')]);
+        $this->post_("/stock-counts/$cid/lines", ['counts' => [['product_id' => $m, 'counted' => 1]]])->assertSessionHasErrors('inventory');
+        // Main count with "not counted = 0": main M = 52 - 12 = 40, count 38 -> M available 50; L main = 0 untouched.
+        $this->post_('/stock-counts', ['location_id' => $main]);
+        $c2 = (int) DB::table('stock_counts')->max('id');
+        $this->post_("/stock-counts/$c2/lines", ['counts' => [['product_id' => $m, 'counted' => 38]]]);
+        $this->post_("/stock-counts/$c2/approve", ['zero_missing' => true])->assertSessionHasNoErrors();
+        $this->assertSame(50, (int) DB::table('finished_good_stocks')->where('product_id', $m)->value('available_stock'));
+        $this->assertSame(28, (int) DB::table('finished_good_stocks')->where('product_id', $this->pid)->value('available_stock'));
+        foreach (['/pos', "/pos?location=$shop", '/stock-counts', "/transfers/create?from=$shop"] as $u) $this->get_($u)->assertOk();
+    }
 }

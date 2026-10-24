@@ -13,7 +13,7 @@ const blank = { id: 0, name: '', phone: '', designation: '', department: '', pay
 export default function Employees({ employees, accounts, role }: PageProps<{ employees: E[]; accounts: { id: number; name: string }[] }>) {
     const f = useForm(blank);
     const [adv, setAdv] = useState<E | null>(null);
-    const a = useForm({ money_account_id: String(accounts[0]?.id ?? ''), amount: '', paid_on: new Date().toISOString().slice(0, 10), note: '' });
+    const a = useForm({ money_account_id: String(accounts[0]?.id ?? ''), amount: '', paid_on: new Date().toLocaleDateString('en-CA'), note: '' });
     const edit = (e: E) => { f.setData({ id: e.id, name: e.name, phone: e.phone ?? '', designation: e.designation ?? '', department: e.department ?? '', pay_type: e.pay_type,
         salary: e.monthly_salary_minor ? String(e.monthly_salary_minor / 100) : '', wage: e.daily_wage_minor ? String(e.daily_wage_minor / 100) : '', join_date: e.join_date ?? '', active: e.active }); window.scrollTo({ top: 0, behavior: 'smooth' }); };
     const save = (ev: React.FormEvent) => { ev.preventDefault();

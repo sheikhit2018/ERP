@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Web\{HrController, AccountsController, PurchaseController, CodController, OrderImportController, SettingsController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
+use App\Http\Controllers\Web\{HrController, StoreController, AccountsController, PurchaseController, CodController, OrderImportController, SettingsController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
     RawMaterialController, ReturnPageController, SalesOrderController, StockLedgerController, TeamController};
 use App\Http\Controllers\CourierReturnController;
 use Illuminate\Support\Facades\Route;
@@ -110,6 +110,28 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         // JSON endpoints used by the barcode QC panel (session + CSRF protected).
         Route::post('/returns/scan', [CourierReturnController::class, 'scan'])->name('returns.scan');
         Route::post('/returns/{return}/qc', [CourierReturnController::class, 'qc'])->whereNumber('return')->name('returns.qc');
+    });
+
+    // Locations, transfers and stock counts (warehouse); counter sales (sales + warehouse); voids & count approval (managers).
+    Route::middleware('tenant.role:warehouse')->group(function () {
+        Route::get('/locations', [StoreController::class, 'index'])->name('locations.index');
+        Route::post('/locations', [StoreController::class, 'saveLocation'])->name('locations.save');
+        Route::get('/transfers/create', [StoreController::class, 'transferForm'])->name('locations.transfer-form');
+        Route::post('/transfers', [StoreController::class, 'transfer'])->name('locations.transfer');
+        Route::get('/stock-counts', [StoreController::class, 'counts'])->name('counts.index');
+        Route::post('/stock-counts', [StoreController::class, 'startCount'])->name('counts.start');
+        Route::get('/stock-counts/{count}', [StoreController::class, 'count'])->whereNumber('count')->name('counts.show');
+        Route::post('/stock-counts/{count}/lines', [StoreController::class, 'recordCount'])->whereNumber('count')->name('counts.record');
+        Route::post('/stock-counts/{count}/cancel', [StoreController::class, 'cancelCount'])->whereNumber('count')->name('counts.cancel');
+    });
+    Route::middleware('tenant.role:sales,warehouse')->group(function () {
+        Route::get('/pos', [StoreController::class, 'pos'])->name('pos.index');
+        Route::post('/pos', [StoreController::class, 'sell'])->name('pos.sell');
+        Route::get('/pos/{sale}/receipt', [StoreController::class, 'receipt'])->whereNumber('sale')->name('pos.receipt');
+    });
+    Route::middleware('tenant.role:manager')->group(function () {
+        Route::post('/pos/{sale}/void', [StoreController::class, 'void'])->whereNumber('sale')->name('pos.void');
+        Route::post('/stock-counts/{count}/approve', [StoreController::class, 'approveCount'])->whereNumber('count')->name('counts.approve');
     });
 
     // HR: attendance + production work log (factory supervisors), staff list (managers), salary money (owner).

@@ -12,7 +12,7 @@ type Props = { month: string; paid: boolean; paid_on: string | null; account: st
 export default function Payroll({ month, paid, paid_on, account, lines, accounts, runs, tenant }: PageProps<Props>) {
     const [adj, setAdj] = useState<Record<number, { bonus: string; ded: string }>>({});
     const [acc, setAcc] = useState(String(accounts.find((a) => /cash/i.test(a.name))?.id ?? accounts[0]?.id ?? ''));
-    const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+    const [date, setDate] = useState(new Date().toLocaleDateString('en-CA'));
     const [busy, setBusy] = useState(false);
     const [slip, setSlip] = useState<L | null>(null);
     const net = (l: L) => paid ? l.net_minor : l.base_minor + l.piece_minor + toMinor(adj[l.employee_id]?.bonus ?? '') - toMinor(adj[l.employee_id]?.ded ?? '') - l.advance_minor;

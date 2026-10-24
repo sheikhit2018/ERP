@@ -13,7 +13,7 @@ type PL = { profit: Record<string, number>; expenses: { category: string; label:
 type Props = { tab: string; filters: { from: string; to: string; account: number | null; category: string }; accounts: Acc[]; entries: Paginated<Entry>;
     totals: { in: number; out: number }; expenseCats: Record<string, string>; incomeCats: Record<string, string>; pl: PL | null; users: Record<string, string> };
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => new Date().toLocaleDateString('en-CA');
 
 function EntryForm({ accounts, expenseCats, incomeCats }: Pick<Props, 'accounts' | 'expenseCats' | 'incomeCats'>) {
     const f = useForm({ direction: 'out', money_account_id: String(accounts[0]?.id ?? ''), category: 'rent', amount: '', entry_date: today(), reference: '', note: '' });

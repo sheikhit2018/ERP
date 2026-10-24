@@ -28,6 +28,7 @@ const NAV: NavGroup[] = [
     { title: 'Overview', items: [{ label: 'Dashboard', href: '/dashboard', match: 'dashboard', icon: I.home },
         { label: 'Reports', href: '/reports', match: 'reports.*', roles: ['sales'], icon: I.chart }] },
     { title: 'Sales & logistics', items: [
+        { label: 'POS (counter sale)', href: '/pos', match: 'pos.*', roles: ['sales', 'warehouse'], icon: I.money },
         { label: 'Orders', href: '/orders', match: 'orders.*', roles: ['sales', 'warehouse'], icon: I.order },
         { label: 'Customers', href: '/customers', match: 'customers.*', roles: ['sales', 'warehouse'], icon: I.team },
         { label: 'Packing station', href: '/courier/pack', match: 'pack.*', roles: ['warehouse'], icon: I.scan },
@@ -40,6 +41,8 @@ const NAV: NavGroup[] = [
         { label: 'Purchases', href: '/purchases', match: 'purchases.*', roles: ['warehouse', 'manufacturer'], icon: I.order },
         { label: 'Suppliers', href: '/suppliers', match: 'suppliers.*', roles: ['warehouse', 'manufacturer'], icon: I.team },
         { label: 'Stock In (scan)', href: '/stock-in', match: 'stockin.*', roles: ['warehouse'], icon: I.scan },
+        { label: 'Warehouses & shops', href: '/locations', match: 'locations.*', roles: ['warehouse'], icon: I.raw },
+        { label: 'Stock count', href: '/stock-counts', match: 'counts.*', roles: ['warehouse'], icon: I.bom },
         { label: 'Stock ledger', href: '/stock-ledger', match: 'stock.*', roles: ['sales', 'warehouse', 'manufacturer'], icon: I.ledger },
     ] },
     { title: 'Factory', items: [
