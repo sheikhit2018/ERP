@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Web\{AccountsController, PurchaseController, CodController, OrderImportController, SettingsController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
+use App\Http\Controllers\Web\{HrController, AccountsController, PurchaseController, CodController, OrderImportController, SettingsController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
     RawMaterialController, ReturnPageController, SalesOrderController, StockLedgerController, TeamController};
 use App\Http\Controllers\CourierReturnController;
 use Illuminate\Support\Facades\Route;
@@ -112,7 +112,24 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::post('/returns/{return}/qc', [CourierReturnController::class, 'qc'])->whereNumber('return')->name('returns.qc');
     });
 
+    // HR: attendance + production work log (factory supervisors), staff list (managers), salary money (owner).
+    Route::middleware('tenant.role:manufacturer')->group(function () {
+        Route::get('/hr/attendance', [HrController::class, 'attendance'])->name('hr.attendance');
+        Route::post('/hr/attendance', [HrController::class, 'saveAttendance'])->name('hr.attendance.save');
+        Route::get('/hr/work', [HrController::class, 'work'])->name('hr.work');
+        Route::post('/hr/work', [HrController::class, 'saveWork'])->name('hr.work.save');
+        Route::delete('/hr/work/{log}', [HrController::class, 'deleteWork'])->whereNumber('log')->name('hr.work.delete');
+    });
+    Route::middleware('tenant.role:manager')->group(function () {
+        Route::get('/hr/employees', [HrController::class, 'employees'])->name('hr.employees');
+        Route::post('/hr/employees', [HrController::class, 'saveEmployee'])->name('hr.employees.save');
+        Route::post('/hr/stages', [HrController::class, 'saveStage'])->name('hr.stages.save');
+    });
+
     Route::middleware('tenant.role:owner')->group(function () {
+        Route::post('/hr/employees/{employee}/advance', [HrController::class, 'advance'])->whereNumber('employee')->name('hr.advance');
+        Route::get('/hr/payroll', [HrController::class, 'payroll'])->name('hr.payroll');
+        Route::post('/hr/payroll', [HrController::class, 'pay'])->name('hr.payroll.pay');
         Route::get('/accounts', [AccountsController::class, 'index'])->name('accounts.index');
         Route::post('/accounts/entries', [AccountsController::class, 'store'])->name('accounts.store');
         Route::post('/accounts/transfer', [AccountsController::class, 'transfer'])->name('accounts.transfer');

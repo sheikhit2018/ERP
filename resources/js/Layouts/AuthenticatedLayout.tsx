@@ -46,8 +46,12 @@ const NAV: NavGroup[] = [
         { label: 'Raw materials', href: '/raw-materials', match: 'materials.*', roles: ['manufacturer', 'warehouse'], icon: I.raw },
         { label: 'BOM / recipes', href: '/boms', match: 'boms.*', roles: ['manufacturer'], icon: I.bom },
         { label: 'Production', href: '/manufacturing', match: 'manufacturing.*', roles: ['manufacturer'], icon: I.factory },
+        { label: 'Work log (pieces)', href: '/hr/work', match: 'hr.work*', roles: ['manufacturer'], icon: I.bom },
+        { label: 'Attendance', href: '/hr/attendance', match: 'hr.attendance*', roles: ['manufacturer'], icon: I.scan },
     ] },
-    { title: 'Finance', items: [{ label: 'Accounts', href: '/accounts', match: 'accounts.*', roles: ['owner'], icon: I.money }] },
+    { title: 'Finance & HR', items: [{ label: 'Accounts', href: '/accounts', match: 'accounts.*', roles: ['owner'], icon: I.money },
+        { label: 'Staff', href: '/hr/employees', match: 'hr.employees*', roles: ['manager'], icon: I.team },
+        { label: 'Payroll', href: '/hr/payroll', match: 'hr.payroll*', roles: ['owner'], icon: I.money }] },
     { title: 'Company', items: [{ label: 'Team & roles', href: '/team', match: 'team.*', roles: ['owner'], icon: I.team },
         { label: 'Settings', href: '/settings', match: 'settings.*', roles: ['owner'], icon: I.gear }] },
 ];

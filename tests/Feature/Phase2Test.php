@@ -96,4 +96,48 @@ class Phase2Test extends TestCase {
         $this->assertSame(0, $this->props('/accounts?tab=pl')['pl']['expense_total']);
         $this->get_('/purchases')->assertOk(); $this->get_('/purchases/create')->assertOk(); $this->get_("/purchases/$po")->assertOk();
     }
+
+    public function test_hr_attendance_piece_work_advances_and_payroll(): void {
+        $m = '2026-09'; // 30 days
+        $this->post_('/hr/employees', ['name' => 'Rahim', 'pay_type' => 'monthly', 'monthly_salary_minor' => 3000000])->assertSessionHasNoErrors();
+        $this->post_('/hr/employees', ['name' => 'Karim', 'pay_type' => 'daily', 'daily_wage_minor' => 50000])->assertSessionHasNoErrors();
+        $this->post_('/hr/employees', ['name' => 'Salma', 'pay_type' => 'piece'])->assertSessionHasNoErrors();
+        $this->post_('/hr/employees', ['name' => 'Office', 'pay_type' => 'monthly', 'monthly_salary_minor' => 2000000])->assertSessionHasNoErrors();
+        $id = DB::table('employees')->pluck('id', 'name');
+        // Rahim: 2 absent + 1 half (=2.5 absent) -> 30000 × 27.5/30 = 27500. Karim: 3 present + 1 half = 3.5 days -> 1750. Office: nothing marked -> full month.
+        $this->post_('/hr/attendance', ['date' => "$m-01", 'marks' => [$id['Rahim'] => 'absent', $id['Karim'] => 'present']])->assertSessionHasNoErrors();
+        $this->post_('/hr/attendance', ['date' => "$m-02", 'marks' => [$id['Rahim'] => 'absent', $id['Karim'] => 'present']]);
+        $this->post_('/hr/attendance', ['date' => "$m-03", 'marks' => [$id['Rahim'] => 'half', $id['Karim'] => 'present']]);
+        $this->post_('/hr/attendance', ['date' => "$m-04", 'marks' => [$id['Rahim'] => 'leave', $id['Karim'] => 'half']]);
+        $this->post_('/hr/attendance', ['date' => "$m-04", 'marks' => [$id['Karim'] => 'bogus']])->assertSessionHasErrors();
+        $this->post_('/hr/attendance', ['date' => now()->addDay()->toDateString(), 'marks' => [$id['Karim'] => 'present']])->assertSessionHasErrors('date');
+        // Salma: 200 sewing (৳20) + 100 ironing (৳3) = 4300. Rate is frozen per entry.
+        $this->props('/hr/work'); // seeds default stages
+        $st = DB::table('work_stages')->pluck('id', 'name');
+        $this->post_('/hr/work', ['work_date' => "$m-05", 'work_stage_id' => $st['Sewing'], 'entries' => [['employee_id' => $id['Salma'], 'quantity' => 200], ['employee_id' => $id['Karim'], 'quantity' => 0]]])->assertSessionHasNoErrors();
+        $this->post_('/hr/work', ['work_date' => "$m-06", 'work_stage_id' => $st['Ironing'], 'entries' => [['employee_id' => $id['Salma'], 'quantity' => 100]]]);
+        $this->post_('/hr/stages', ['id' => $st['Sewing'], 'name' => 'Sewing', 'rate_minor' => 9999])->assertSessionHasNoErrors();
+        $this->assertSame(2, DB::table('work_logs')->count());
+        // Advance to Salma 1000 from Cash.
+        $this->props('/hr/employees');
+        $this->post_("/hr/employees/{$id['Salma']}/advance", ['money_account_id' => $this->acc('Cash'), 'amount_minor' => 100000, 'paid_on' => "$m-10"])->assertSessionHasNoErrors();
+
+        $lines = collect($this->props("/hr/payroll?month=$m")['lines'])->keyBy('name');
+        $this->assertSame(2750000, $lines['Rahim']['base_minor']);
+        $this->assertSame(175000, $lines['Karim']['base_minor']);
+        $this->assertSame(2000000, $lines['Office']['base_minor']);
+        $this->assertSame([300, 430000, 100000, 330000], [$lines['Salma']['pieces'], $lines['Salma']['piece_minor'], $lines['Salma']['advance_minor'], $lines['Salma']['net_minor']]);
+
+        $this->post_('/hr/payroll', ['month' => $m, 'money_account_id' => $this->acc('Cash'), 'paid_on' => '2026-10-01', 'adjust' => [$id['Karim'] => ['bonus_minor' => 25000, 'deduction_minor' => 0]]])->assertSessionHasNoErrors();
+        $this->post_('/hr/payroll', ['month' => $m, 'money_account_id' => $this->acc('Cash'), 'paid_on' => '2026-10-01'])->assertSessionHasErrors('inventory');
+        $p = $this->props("/hr/payroll?month=$m");
+        $this->assertTrue($p['paid']);
+        $net = 2750000 + 200000 + 2000000 + 330000;
+        $this->assertSame($net, (int) DB::table('ledger_entries')->where('source_type', 'payroll_line')->sum('amount_minor'));
+        $this->assertSame(-($net + 100000), collect($this->props('/accounts')['accounts'])->firstWhere('name', 'Cash')['balance_minor']);
+        $this->assertSame(0, DB::table('salary_advances')->whereNull('payroll_line_id')->count());
+        // Paid month: work entries locked; salary shows as expense in P&L.
+        $this->delete($this->base.'/hr/work/'.DB::table('work_logs')->value('id'))->assertSessionHas('error');
+        $this->assertSame(2, DB::table('work_logs')->count());
+    }
 }
