@@ -96,4 +96,36 @@ class Phase1Test extends TestCase {
         $this->get_('/cod/import')->assertOk();
         $this->get_("/orders/$a")->assertOk()->assertInertia(fn ($p) => $p->has('order.payments', 1)->where('order.shipment.cod_expected_minor', 86000));
     }
+
+    public function test_reports_sales_profit_products_couriers_stock_and_csv(): void {
+        // price 500, cost 300, delivery 60 per order. A: 2 pcs delivered (charge 70). B: 1 pc returned, damaged. C: 1 pc with courier.
+        $a = $this->order('01811111111', 2); $b = $this->order('01822222222', 1); $c = $this->order('01833333333', 1);
+        $this->order('01844444444', 1); $d = (int) DB::table('sales_orders')->max('id');
+        $this->post_("/orders/$d/cancel");
+        $this->ship($a, 'RA', 'pathao'); $this->ship($b, 'RB', 'pathao'); $this->ship($c, 'RC', 'redx');
+        $this->post_('/cod/import', ['idempotency_key' => (string) Str::uuid(), 'courier' => 'pathao', 'paid_on' => now()->toDateString(), 'mark_delivered' => true,
+            'lines' => [['tracking' => 'RA', 'collected' => 106000, 'charge' => 7000]]])->assertSessionHasNoErrors();
+        $this->post_('/courier/returns', ['idempotency_key' => (string) Str::uuid(), 'courier' => 'pathao', 'parcels' => [['tracking_id' => 'RB', 'damaged' => true]]])->assertSessionHasNoErrors();
+
+        $p = fn ($tab) => $this->get_("/reports?tab=$tab")->assertOk()->viewData('page')['props']['data'];
+        $sales = $p('sales');
+        $this->assertSame([3, 4, 3 * 6000 + 4 * 50000, 1], [$sales['totals']['orders'], $sales['totals']['pieces'], $sales['totals']['value'], $sales['totals']['cancelled']]);
+        $profit = $p('profit');
+        // 1000 sales + 60 delivery - 600 cost - 70 courier = 390 tk; damaged 1 pc at cost 300.
+        $this->assertSame([100000, 6000, 60000, 7000, 39000, 30000, 9000], [$profit['revenue'], $profit['delivery_income'], $profit['cogs'], $profit['courier_charges'],
+            $profit['gross_profit'], $profit['damaged_cost'], $profit['net_after_losses']]);
+        $prod = $p('products');
+        $this->assertSame([4, 1, 25.0], [$prod['rows'][0]['qty'], $prod['rows'][0]['returned'], $prod['rows'][0]['return_rate']]);
+        $cour = collect($p('couriers')['rows'])->keyBy('courier');
+        $this->assertSame([2, 1, 1, 50.0, 7000], [$cour['pathao']['sent'], $cour['pathao']['delivered'], $cour['pathao']['returned'], $cour['pathao']['success'], $cour['pathao']['charges']]);
+        $this->assertSame(1, $cour['redx']['open']);
+        $stock = $p('stock');
+        // 500 opening - 4 sold + 0 back good (damaged) = 496 own pieces (1 reserved? no: all shipped) -> available 496, transit 1, damaged 1
+        $this->assertSame([496, 496 * 30000, 496 * 50000, 1, 1], [$stock['totals']['pieces'], $stock['totals']['cost_value'], $stock['totals']['sale_value'], $stock['totals']['transit'], $stock['totals']['damaged']]);
+
+        foreach (['sales', 'profit', 'products', 'couriers', 'stock'] as $tab) {
+            $r = $this->get_("/reports?tab=$tab&export=csv")->assertOk()->assertHeader('content-type', 'text/csv; charset=UTF-8');
+            $this->assertStringStartsWith("\xEF\xBB\xBF", $r->streamedContent());
+        }
+    }
 }

@@ -115,7 +115,7 @@ class InventoryService {
                 'customer_phone'=>\App\Support\Phone::normalize($d['customer']['phone'])]);
             foreach ($d['items'] as $item) {
                 $s = $this->stock($item['product_id']);
-                SalesOrderItem::create($item + ['sales_order_id'=>$order->id]);
+                SalesOrderItem::create($item + ['sales_order_id'=>$order->id, 'unit_cost_minor'=>(int) Product::whereKey($item['product_id'])->value('cost_minor')]);
                 $this->move($s, 'available_stock', -$item['quantity'], 'reserve', "ORDER:$order->id", $actor);
                 $this->move($s, 'reserved_stock', $item['quantity'], 'reserve', "ORDER:$order->id", $actor);
             }
