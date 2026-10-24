@@ -1,5 +1,6 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Couriers } from '@/Components/CourierStats';
+import ParcelImport from '@/Components/ParcelImport';
 import { Button, Card, Empty, Field, Input, LinkButton, PageHeader, Select, td, th } from '@/Components/ui';
 import { beep } from '@/lib/scan';
 import { num, uuid } from '@/lib/format';
@@ -29,6 +30,12 @@ export default function Dispatch({ couriers, orders, errors }: PageProps<{ couri
     const inList = new Set(list.map((p) => p.order_id));
     const pieces = list.reduce((a, p) => a + (byId.get(p.order_id)?.pieces ?? 0), 0);
     const say = (ok: boolean, text: string) => { setMsg({ ok, text }); beep(ok); };
+    const [mode, setMode] = useState<'scan' | 'file'>('scan');
+    const addMany = (ps: Parcel[]) => {
+        setList((l) => [...ps.slice().reverse(), ...l]);
+        say(true, `Added ${ps.length} parcels from the file. Check the list, then press “Hand over”.`);
+        setMode('scan');
+    };
 
     const pickOrder = (raw: string) => {
         const id = parseInt(raw.replace(/\D/g, ''));
@@ -76,12 +83,19 @@ export default function Dispatch({ couriers, orders, errors }: PageProps<{ couri
                             <Field label="Courier"><Select value={courier} onChange={(e) => setCourier(e.target.value)}>{Object.entries(couriers).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
                             <Field label="Note (optional)"><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Rider name, pickup time…" maxLength={190} /></Field>
                         </div>
-                        <form onSubmit={addParcel} className="grid gap-3 border-t border-slate-100 p-5 sm:grid-cols-[1fr_1.4fr_auto] sm:items-end">
+                        <div className="flex gap-1 border-t border-slate-100 px-5 pt-4 text-sm">
+                            {([['scan', 'Scan one by one'], ['file', 'Import from Excel / CSV']] as const).map(([k, l]) => (
+                                <button key={k} type="button" onClick={() => setMode(k)}
+                                    className={`rounded-md px-3 py-1.5 ${mode === k ? 'bg-brand-50 font-semibold text-brand-800' : 'text-slate-600 hover:bg-slate-100'}`}>{l}</button>
+                            ))}
+                        </div>
+                        {mode === 'file' && <ParcelImport ready={byId} inList={inList} listTrackings={new Set(list.map((p) => p.tracking_id))} onAdd={addMany} />}
+                        {mode === 'scan' && <form onSubmit={addParcel} className="grid gap-3 p-5 sm:grid-cols-[1fr_1.4fr_auto] sm:items-end">
                             <Field label="1. Order #"><Input ref={orderRef} autoFocus value={orderNo} inputMode="numeric" placeholder="Scan / type order no."
                                 onChange={(e) => setOrderNo(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); pickOrder(orderNo); } }} /></Field>
                             <Field label="2. Courier tracking ID"><Input ref={trackRef} value={tracking} placeholder="Scan the courier label" onChange={(e) => setTracking(e.target.value)} /></Field>
                             <Button>Add parcel</Button>
-                        </form>
+                        </form>}
                         {msg && <p className={`mx-5 mb-5 rounded-lg px-3 py-2 text-sm ${msg.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`}>{msg.text}</p>}
                     </Card>
 
