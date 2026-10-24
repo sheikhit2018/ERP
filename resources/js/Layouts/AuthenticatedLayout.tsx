@@ -83,7 +83,7 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
                 <div className="truncate text-sm font-semibold text-white">{tenant?.name ?? '—'}</div>
                 <div className="text-xs capitalize text-slate-400">{role}</div>
             </div>
-            <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-6">
+            <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 pb-6">
                 {NAV.map((g) => {
                     const items = g.items.filter((i) => allowed(role, i.roles));
                     if (!items.length) return null;
@@ -94,7 +94,7 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
                                 const active = route().current(i.match);
                                 return (
                                     <Link key={i.href} href={i.href}
-                                        className={`flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition ${active ? 'bg-brand-600/15 text-brand-300' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>
+                                        className={`flex items-center gap-3 rounded-lg px-2.5 py-1.5 text-sm font-medium transition ${active ? 'bg-brand-600/15 text-brand-300' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>
                                         <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={i.icon} /></svg>
                                         {i.label}
                                     </Link>
