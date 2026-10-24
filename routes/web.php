@@ -61,6 +61,9 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::get('/courier/batches/{batch}', [CourierController::class, 'batch'])->whereNumber('batch')->name('courier.batch');
     });
     Route::middleware('tenant.role:warehouse')->group(function () {
+        Route::get('/courier/pack', [CourierController::class, 'packPage'])->name('pack.index');
+        Route::get('/courier/pack/order', [CourierController::class, 'packOrder'])->name('pack.order');
+        Route::post('/courier/pack', [CourierController::class, 'packStore'])->name('pack.store');
         Route::get('/courier/dispatch', [CourierController::class, 'dispatchPage'])->name('courier.dispatch');
         Route::post('/courier/dispatch', [CourierController::class, 'dispatchStore'])->name('courier.dispatch.store');
         Route::get('/courier/delivered', [CourierController::class, 'deliveredPage'])->name('courier.delivered');

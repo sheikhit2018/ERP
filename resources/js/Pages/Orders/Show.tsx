@@ -1,10 +1,11 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Button, Card, Field, Input, PageHeader, Select, StatusBadge, td, th } from '@/Components/ui';
+import { Button, Card, Field, Input, LinkButton, PageHeader, Select, StatusBadge, td, th } from '@/Components/ui';
 import { STATUS_LABEL, dateTime, num, taka } from '@/lib/format';
 import { PageProps } from '@/types';
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { FormEvent } from 'react';
 import ScanChecklist, { useScanChecklist } from '@/Components/ScanChecklist';
+import BarcodeSvg from '@/Components/BarcodeSvg';
 
 type Order = {
     id: number; status: string; source: string; note: string | null; created_at: string; delivery_charge_minor: number; discount_minor: number;
@@ -25,8 +26,8 @@ export default function ShowOrder({ order, logs, role }: PageProps<{ order: Orde
     const checkItems = order.items.map((i) => ({ product_id: i.product.id, label: i.product.label ?? i.product.name, sku: i.product.sku, barcode: i.product.barcode, quantity: i.quantity }));
     const check = useScanChecklist(checkItems);
     const handover = (e: FormEvent) => {
-        e.preventDefault(); if (!check.done) return;
-        ship.transform((d) => ({ ...d, scans: check.scans }));
+        e.preventDefault(); if (order.status !== 'packed' && !check.done) return;
+        ship.transform((d) => (order.status === 'packed' ? d : { ...d, scans: check.scans }));
         ship.post(`/orders/${order.id}/handover`, { preserveScroll: true });
     };
 
@@ -38,6 +39,7 @@ export default function ShowOrder({ order, logs, role }: PageProps<{ order: Orde
                 actions={<>
                     <StatusBadge status={order.status} />
                     <Button variant="secondary" className="print:hidden" onClick={() => window.print()}>Print invoice</Button>
+                    <div className="w-40" title="Scan at the packing station"><BarcodeSvg value={String(order.id)} fmt="CODE128" height={34} /></div>
                 </>} />
 
             <div className="grid gap-6 lg:grid-cols-3">
@@ -86,9 +88,21 @@ export default function ShowOrder({ order, logs, role }: PageProps<{ order: Orde
                     <Card title="Next step" className="print:hidden">
                         <div className="space-y-3 p-5">
                             {order.status === 'pending' && isSales && <Button className="w-full" onClick={() => act('confirm')}>Confirm order</Button>}
+                            {order.status === 'confirmed' && isWh && <LinkButton href="/courier/pack">Pack at the packing station</LinkButton>}
+                            {order.status === 'packed' && isWh && (
+                                <form onSubmit={handover} className="space-y-3">
+                                    <p className="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-900">Packed and scan-verified. Hand it to the courier here, or in bulk on <Link href="/courier/dispatch" className="font-semibold underline">Hand over to courier</Link>.</p>
+                                    {(ship.errors as any).inventory && <p className="text-sm text-rose-600">{(ship.errors as any).inventory}</p>}
+                                    <Field label="Courier"><Select value={ship.data.courier} onChange={(x) => ship.setData('courier', x.target.value)}>
+                                        {COURIERS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select></Field>
+                                    <Field label="Tracking / consignment ID" error={(ship.errors as any).tracking_id}>
+                                        <Input value={ship.data.tracking_id} onChange={(x) => ship.setData('tracking_id', x.target.value)} required placeholder="Scan or type" /></Field>
+                                    <Button className="w-full" disabled={ship.processing}>Hand over to courier (stock out)</Button>
+                                </form>
+                            )}
                             {order.status === 'confirmed' && isWh && (
                                 <form onSubmit={handover} className="space-y-3" onKeyDown={(e) => { if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') e.preventDefault(); }}>
-                                    <div className="text-sm font-medium text-slate-700">1. Scan every item into the parcel</div>
+                                    <div className="pt-2 text-sm font-medium text-slate-700">Or pack & hand over here — 1. scan every item into the parcel</div>
                                     <ScanChecklist items={checkItems} state={check} />
                                     {((ship.errors as any).scans || (ship.errors as any).inventory) && <p className="text-sm text-rose-600">{(ship.errors as any).scans || (ship.errors as any).inventory}</p>}
                                     <div className="pt-2 text-sm font-medium text-slate-700">2. Courier</div>
@@ -102,8 +116,8 @@ export default function ShowOrder({ order, logs, role }: PageProps<{ order: Orde
                             )}
                             {order.status === 'shipped' && isWh && <Button className="w-full" onClick={() => act('delivered', 'Mark this order as delivered?')}>Mark delivered</Button>}
                             {order.status === 'shipped' && <p className="text-xs text-slate-500">If the parcel comes back, scan it on <Link href="/returns" className="text-brand-700">Returns & QC</Link>.</p>}
-                            {['pending', 'confirmed'].includes(order.status) && isSales && <Button variant="secondary" className="w-full text-rose-700" onClick={() => act('cancel', 'Cancel this order and release the reserved stock?')}>Cancel order</Button>}
-                            {['delivered', 'returned', 'return_damaged', 'cancelled'].includes(order.status) && <p className="text-sm text-slate-500">This order is closed.</p>}
+                            {['pending', 'confirmed', 'packed'].includes(order.status) && isSales && <Button variant="secondary" className="w-full text-rose-700" onClick={() => act('cancel', 'Cancel this order and release the reserved stock?')}>Cancel order</Button>}
+                            {['delivered', 'partial_delivered', 'returned', 'returned_short', 'return_damaged', 'lost', 'cancelled'].includes(order.status) && <p className="text-sm text-slate-500">This order is closed.</p>}
                         </div>
                     </Card>
                 </div>

@@ -133,13 +133,13 @@ class InventoryService {
         return $this->transaction(function () use ($id, $actor) {
             $o = SalesOrder::whereKey($id)->lockForUpdate()->firstOrFail();
             if ($o->status === 'cancelled') return $o;
-            abort_unless(in_array($o->status, ['pending','confirmed'], true), 409, 'Cannot cancel after handover.');
+            abort_unless(in_array($o->status, ['pending','confirmed','packed'], true), 409, 'Cannot cancel after handover.');
             foreach ($o->items()->orderBy('product_id')->get() as $i) {
                 $s = $this->stock((int)$i->product_id);
                 $this->move($s, 'reserved_stock', -(int)$i->quantity, 'cancel', "ORDER:$id", $actor);
                 $this->move($s, 'available_stock', (int)$i->quantity, 'cancel', "ORDER:$id", $actor);
             }
-            $o->status = 'cancelled'; $o->save(); return $o;
+            $o->status = 'cancelled'; $o->packed_at = null; $o->save(); return $o;
         });
     }
     private function log(Shipment $s, string $event, int $actor, array $payload = []): void {
@@ -157,8 +157,11 @@ class InventoryService {
                 abort_unless($old->courier === $d['courier'] && $old->tracking_id === $d['tracking_id'], 409, 'Order already handed over with different shipment data.');
                 return $o;
             }
-            abort_unless($o->status === 'confirmed', 409, 'Confirm the order before handover.');
+            // A packed order was already scan-verified at the packing station; a confirmed one must be scanned now.
+            abort_unless($o->status === 'packed' || ($o->status === 'confirmed' && $scans !== null), 409,
+                $o->status === 'confirmed' ? 'Pack the order first (scan every piece at the packing station).' : 'Only packed orders can be handed over.');
             if ($scans !== null) $this->assertScansMatch($o->items()->get()->mapWithKeys(fn ($i) => [(int)$i->product_id => (int)$i->quantity])->all(), $scans);
+            if ($o->status === 'confirmed') { $o->packed_at = now(); $o->packed_by = $actor; }
             abort_if(Shipment::where('courier',$d['courier'])->where('tracking_id',$d['tracking_id'])->exists(), 409, 'Tracking ID already assigned.');
             $s = Shipment::create($d + ['sales_order_id'=>$id, 'status'=>'shipped', 'handed_over_at'=>now(),
                 'piece_count'=>(int) $o->items()->sum('quantity'), 'dispatch_batch_id'=>$batchId]);
@@ -198,7 +201,7 @@ class InventoryService {
             abort_unless($o->status === 'shipped' && $s->status === 'shipped', 409, 'This shipment is not eligible for courier return.');
             $r = CourierReturn::create(['shipment_id'=>$s->id, 'status'=>'pending', 'received_by'=>$actor]);
             foreach ($o->items as $i) ReturnItem::create(['courier_return_id'=>$r->id, 'sales_order_item_id'=>$i->id, 'quantity'=>$i->quantity]);
-            $o->status = 'return_pending'; $o->save(); $s->status = 'return_pending'; $s->returned_at = now(); $s->save();
+            $o->status = 'return_pending'; $o->save(); $s->status = 'return_pending'; $s->returned_at = now(); $s->returned_pieces = (int) $s->piece_count; $s->save();
             $this->log($s, 'return_scanned', $actor);
             // Logical transit includes unapproved returns. These units remain unsellable until QC.
             return $r;
@@ -225,6 +228,7 @@ class InventoryService {
                 $bucket = $target === 'passed' ? 'available_stock' : 'damaged_stock';
                 $this->move($stock, $bucket, (int)$i->quantity, 'return_qc', "RETURN:$id", $actor);
             }
+            if ($target === 'damaged') $r->items()->update(['damaged_quantity'=>DB::raw('quantity')]);
             $r->status = $target; $r->reviewed_by = $actor; $r->reviewed_at = now(); $r->save();
             $o->status = $target === 'passed' ? 'returned' : 'return_damaged'; $o->save();
             $s->status = $o->status; $s->save(); $this->log($s, $decision, $actor, $scans !== null ? ['scan_verified'=>true] : []);
@@ -523,7 +527,7 @@ class InventoryService {
             foreach ($parcels as $oid => $tracking) {
                 $o = $orders[$oid] ?? null;
                 if (!$o) $problems[] = "#$oid not found";
-                elseif ($o->status !== 'confirmed') $problems[] = "#$oid is {$o->status} (only confirmed orders can be handed over)";
+                elseif ($o->status !== 'packed') $problems[] = $o->status === 'confirmed' ? "#$oid is not packed yet (scan it at the packing station)" : "#$oid is {$o->status}";
                 if (isset($taken[$tracking])) $problems[] = "tracking $tracking already used on order #{$taken[$tracking]->sales_order_id}";
             }
             if ($problems) $this->fail('Batch not saved. Fix: '.implode('; ', $problems).'.');
@@ -539,8 +543,12 @@ class InventoryService {
     }
 
     /**
-     * Receive many returned parcels from one courier at once and put them back in stock.
-     * parcels: [{tracking_id, damaged?}]. Good parcels -> available stock, damaged -> damaged stock.
+     * Receive many returned parcels from one courier at once and put the pieces back in stock.
+     * parcels: [{tracking_id, items: [{product_id, returned, damaged}], short: kept|missing}]
+     *   items  = what was scanned out of the parcel per variant (returned includes damaged).
+     *   short  = what happened to pieces that did not come back: "kept" by the customer (partial
+     *            delivery) or "missing" (courier claim). Required when anything is short.
+     * Without items, the whole parcel is taken as returned ({tracking_id, damaged: bool}).
      * A parcel earlier marked "lost" that turns up again is accepted too.
      */
     public function returnBatch(array $data, int $actor): CourierBatch {
@@ -548,9 +556,23 @@ class InventoryService {
             'idempotency_key'=>'required|uuid', 'courier'=>self::COURIER_RULE, 'note'=>'nullable|string|max:190',
             'parcels'=>'required|array|min:1|max:2000',
             'parcels.*.tracking_id'=>'required|string|max:120|distinct', 'parcels.*.damaged'=>'nullable|boolean',
+            'parcels.*.short'=>'nullable|in:kept,missing',
+            'parcels.*.items'=>'nullable|array|max:100', 'parcels.*.items.*.product_id'=>'required|integer|min:1',
+            'parcels.*.items.*.returned'=>'required|integer|min:0|max:1000000', 'parcels.*.items.*.damaged'=>'nullable|integer|min:0|max:1000000',
         ])->validate();
         $parcels = [];
-        foreach ($d['parcels'] as $p) $parcels[trim((string) $p['tracking_id'])] = !empty($p['damaged']);
+        foreach ($d['parcels'] as $p) {
+            $items = null;
+            if (isset($p['items'])) {
+                $items = [];
+                foreach ($p['items'] as $i) {
+                    $pid = (int) $i['product_id'];
+                    $items[$pid] = ['returned'=>($items[$pid]['returned'] ?? 0) + (int) $i['returned'], 'damaged'=>($items[$pid]['damaged'] ?? 0) + (int) ($i['damaged'] ?? 0)];
+                }
+                ksort($items);
+            }
+            $parcels[trim((string) $p['tracking_id'])] = ['items'=>$items, 'damaged'=>!empty($p['damaged']), 'short'=>$p['short'] ?? null];
+        }
         ksort($parcels);
         $hash = $this->hash(['return', $d['courier'], $d['note'] ?? null, $parcels]);
 
@@ -559,25 +581,76 @@ class InventoryService {
             if ($old) return $this->replay($old, $hash);
 
             $ships = $this->shipmentsByTracking($d['courier'], array_keys($parcels));
-            $problems = [];
-            foreach ($parcels as $tracking => $_) {
+            $lines = SalesOrderItem::whereIn('sales_order_id', $ships->pluck('sales_order_id'))->get()->groupBy('sales_order_id');
+            $problems = []; $plan = [];
+            foreach ($parcels as $tracking => $p) {
                 $s = $ships[$tracking] ?? null;
-                if (!$s) $problems[] = "$tracking not found for {$d['courier']}";
-                elseif (!in_array($s->status, ['shipped', 'lost'], true)) $problems[] = "$tracking (order #{$s->sales_order_id}) is already {$s->status}";
+                if (!$s) { $problems[] = "$tracking not found for {$d['courier']}"; continue; }
+                if (!in_array($s->status, ['shipped', 'lost'], true)) { $problems[] = "$tracking (order #{$s->sales_order_id}) is already {$s->status}"; continue; }
+                $rows = [];
+                foreach ($lines[$s->sales_order_id] ?? [] as $l) {
+                    $sent = (int) $l->quantity;
+                    $back = $p['items'] === null ? $sent : (int) ($p['items'][(int) $l->product_id]['returned'] ?? 0);
+                    $bad = $p['items'] === null ? ($p['damaged'] ? $sent : 0) : (int) ($p['items'][(int) $l->product_id]['damaged'] ?? 0);
+                    if ($back > $sent) $problems[] = "$tracking: more pieces scanned than were sent";
+                    if ($bad > $back) $problems[] = "$tracking: more damaged than returned";
+                    $rows[] = ['line'=>$l, 'sent'=>$sent, 'back'=>min($back, $sent), 'bad'=>min($bad, $back)];
+                }
+                if ($p['items'] !== null) {
+                    $foreign = array_diff(array_keys($p['items']), ($lines[$s->sales_order_id] ?? collect())->pluck('product_id')->map(fn ($x) => (int) $x)->all());
+                    if ($foreign) $problems[] = "$tracking: scanned item(s) that were not in this parcel";
+                }
+                $short = array_sum(array_map(fn ($r) => $r['sent'] - $r['back'], $rows));
+                if ($short > 0 && !$p['short']) $problems[] = "$tracking: $short pcs did not come back — choose “customer kept” or “missing”";
+                $plan[$tracking] = ['ship'=>$s, 'rows'=>$rows, 'short'=>$p['short']];
             }
-            if ($problems) $this->fail('Return batch not saved. Fix: '.implode('; ', $problems).'.');
+            if ($problems) $this->fail('Return batch not saved. Fix: '.implode('; ', array_unique($problems)).'.');
 
             $batch = CourierBatch::create(['type'=>'return', 'courier'=>$d['courier'], 'parcel_count'=>count($parcels),
-                'piece_count'=>(int) $ships->sum('piece_count'), 'note'=>$d['note'] ?? null,
+                'piece_count'=>array_sum(array_map(fn ($x) => array_sum(array_column($x['rows'], 'back')), $plan)), 'note'=>$d['note'] ?? null,
                 'idempotency_key'=>$d['idempotency_key'], 'request_hash'=>$hash, 'created_by'=>$actor]);
-            foreach ($parcels as $tracking => $damaged) {
-                $s = $ships[$tracking];
-                if ($s->status === 'lost') $this->unLose($s, $actor);
-                $r = $this->scan(['courier_tracking_id'=>$tracking, 'courier'=>$d['courier']], $actor);
-                $r->return_batch_id = $batch->id; $r->save();
-                $this->qc($r->id, $damaged ? 'DAMAGED' : 'QC_PASSED', $actor);
-            }
+            foreach ($plan as $x) $this->receiveReturn($x['ship'], $x['rows'], $x['short'], $batch->id, $actor);
             return $batch;
+        });
+    }
+
+    /** Book one returned parcel line by line. Call inside transaction(). */
+    private function receiveReturn(Shipment $s, array $rows, ?string $short, int $batchId, int $actor): void {
+        $s = Shipment::whereKey($s->id)->lockForUpdate()->first();
+        if ($s->status === 'lost') $this->unLose($s, $actor);
+        $o = $s->order()->lockForUpdate()->firstOrFail();
+        $good = $bad = $kept = $missing = 0;
+        $r = CourierReturn::create(['shipment_id'=>$s->id, 'status'=>'pending', 'received_by'=>$actor, 'return_batch_id'=>$batchId]);
+        foreach ($rows as $x) {
+            $l = $x['line']; $g = $x['back'] - $x['bad']; $sh = $x['sent'] - $x['back'];
+            $k = $short === 'kept' ? $sh : 0; $m = $short === 'missing' ? $sh : 0;
+            if ($x['back'] > 0) ReturnItem::create(['courier_return_id'=>$r->id, 'sales_order_item_id'=>$l->id, 'quantity'=>$x['back'],
+                'damaged_quantity'=>$x['bad'], 'kept_quantity'=>$k, 'missing_quantity'=>$m]);
+            $stock = $this->stock((int) $l->product_id); $ref = "RETURN:$r->id";
+            if ($g) { $this->move($stock, 'transit_stock', -$g, 'return_qc', $ref, $actor); $this->move($stock, 'available_stock', $g, 'return_qc', $ref, $actor); }
+            if ($x['bad']) { $this->move($stock, 'transit_stock', -$x['bad'], 'return_qc', $ref, $actor); $this->move($stock, 'damaged_stock', $x['bad'], 'return_qc', $ref, $actor); }
+            if ($k) $this->move($stock, 'transit_stock', -$k, 'partial_delivered', $ref, $actor);
+            if ($m) $this->move($stock, 'transit_stock', -$m, 'courier_short', $ref, $actor);
+            $good += $g; $bad += $x['bad']; $kept += $k; $missing += $m;
+        }
+        $status = $kept ? 'partial_delivered' : ($missing ? 'returned_short' : ($good ? 'returned' : 'return_damaged'));
+        $r->status = $good ? 'passed' : 'damaged'; $r->reviewed_by = $actor; $r->reviewed_at = now(); $r->save();
+        $s->status = $status; $s->returned_at = now(); $s->returned_pieces = $good + $bad; $s->kept_pieces = $kept; $s->missing_pieces = $missing; $s->save();
+        $o->status = $status; $o->save();
+        $this->log($s, 'returned', $actor, ['good'=>$good, 'damaged'=>$bad, 'kept'=>$kept, 'missing'=>$missing]);
+    }
+
+    /** Packing station: every piece scanned into the parcel must match the order exactly. */
+    public function pack(int $orderId, mixed $scans, int $actor): SalesOrder {
+        $map = $this->scanMap($scans);
+        if (!$map) $this->fail('Scan every piece before packing.');
+        return $this->transaction(function () use ($orderId, $map, $actor) {
+            $o = SalesOrder::whereKey($orderId)->lockForUpdate()->firstOrFail();
+            if ($o->status === 'packed') return $o;
+            abort_unless($o->status === 'confirmed', 409, $o->status === 'pending' ? 'Confirm the order before packing.' : "Order is already {$o->status}.");
+            $this->assertScansMatch($o->items()->get()->mapWithKeys(fn ($i) => [(int) $i->product_id => (int) $i->quantity])->all(), $map);
+            $o->status = 'packed'; $o->packed_at = now(); $o->packed_by = $actor; $o->save();
+            return $o;
         });
     }
 

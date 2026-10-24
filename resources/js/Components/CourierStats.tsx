@@ -4,26 +4,30 @@ export type Stats = {
     sent_parcels: number; sent_pieces: number; delivered_parcels: number; delivered_pieces: number;
     returned_parcels: number; returned_pieces: number; lost_parcels: number; lost_pieces: number;
     open_parcels: number; open_pieces: number; overdue_parcels: number; overdue_pieces: number;
+    partial_parcels: number; kept_pieces: number; short_parcels: number; missing_pieces: number;
 };
 export type Couriers = Record<string, string>;
 
 /** Parcels / pieces tiles: Sent = Delivered + Returned + Lost + With courier. */
 export function StatTiles({ s, days }: { s: Stats; days: number }) {
-    const tiles: [string, number, number, string, string?][] = [
+    const tiles: [string, number, number, string, string?, string?][] = [
         ['Sent to courier', s.sent_parcels, s.sent_pieces, 'text-slate-900'],
-        ['Delivered', s.delivered_parcels, s.delivered_pieces, 'text-emerald-700'],
-        ['Returned', s.returned_parcels, s.returned_pieces, 'text-sky-700'],
+        ['Delivered', s.delivered_parcels, s.delivered_pieces, 'text-emerald-700', 'Pieces include those customers kept from partly returned parcels',
+            s.kept_pieces ? `incl. ${num(s.kept_pieces)} pcs kept (${num(s.partial_parcels)} partial)` : undefined],
+        ['Returned', s.returned_parcels, s.returned_pieces, 'text-sky-700', 'Parcels that came back; pieces = pieces actually scanned back'],
         ['With courier', s.open_parcels, s.open_pieces, 'text-violet-700'],
         [`Overdue (> ${days} days)`, s.overdue_parcels, s.overdue_pieces, s.overdue_parcels ? 'text-rose-600' : 'text-slate-400', 'Not delivered, not returned — ask the courier'],
-        ['Lost (claimed)', s.lost_parcels, s.lost_pieces, s.lost_parcels ? 'text-rose-800' : 'text-slate-400'],
+        ['Lost / missing', s.lost_parcels, s.lost_pieces, s.lost_pieces ? 'text-rose-800' : 'text-slate-400', 'Whole parcels lost + pieces missing from returned parcels — claim from the courier',
+            s.missing_pieces ? `incl. ${num(s.missing_pieces)} pcs missing from ${num(s.short_parcels)} returns` : undefined],
     ];
     return (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-            {tiles.map(([label, p, pcs, tone, hint]) => (
+            {tiles.map(([label, p, pcs, tone, hint, extra]) => (
                 <div key={label} title={hint} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="text-xs font-medium text-slate-500">{label}</div>
                     <div className={`mt-1 text-2xl font-semibold tabular-nums ${tone}`}>{num(p)}</div>
                     <div className="text-xs text-slate-500">parcels · <b className="text-slate-700">{num(pcs)}</b> pcs</div>
+                    {extra && <div className="mt-1 text-[11px] text-slate-500">{extra}</div>}
                 </div>
             ))}
         </div>

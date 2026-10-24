@@ -40,6 +40,8 @@ class OpryxWorkflowTest extends TestCase {
     private function stock(): object { return DB::table('finished_good_stocks')->where('tenant_id',$this->tenant)->where('product_id',$this->product)->first(); }
     private function shipped(): int {
         $id = $this->api('orders', $this->orderData())->assertOk()->json('id');
+        $this->api("orders/$id/handover", ['courier'=>'test','tracking_id'=>'TRACK-1'])->assertStatus(409); // must be packed first
+        $this->api("orders/$id/pack", ['scans'=>[['product_id'=>$this->product,'quantity'=>3]]])->assertOk()->assertJsonPath('status', 'packed');
         $this->api("orders/$id/handover", ['courier'=>'test','tracking_id'=>'TRACK-1'])->assertOk();
         return $id;
     }

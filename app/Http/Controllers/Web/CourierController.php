@@ -25,11 +25,15 @@ class CourierController extends Controller {
         $open = 'delivered_at is null and returned_at is null and lost_at is null';
         return $q->selectRaw("count(*) as sent_parcels, coalesce(sum(piece_count),0) as sent_pieces,
             sum(case when delivered_at is not null then 1 else 0 end) as delivered_parcels,
-            coalesce(sum(case when delivered_at is not null then piece_count else 0 end),0) as delivered_pieces,
+            coalesce(sum(case when delivered_at is not null then piece_count else kept_pieces end),0) as delivered_pieces,
             sum(case when returned_at is not null then 1 else 0 end) as returned_parcels,
-            coalesce(sum(case when returned_at is not null then piece_count else 0 end),0) as returned_pieces,
+            coalesce(sum(case when returned_at is not null then returned_pieces else 0 end),0) as returned_pieces,
             sum(case when lost_at is not null then 1 else 0 end) as lost_parcels,
-            coalesce(sum(case when lost_at is not null then piece_count else 0 end),0) as lost_pieces,
+            coalesce(sum(case when lost_at is not null then piece_count else missing_pieces end),0) as lost_pieces,
+            sum(case when kept_pieces > 0 then 1 else 0 end) as partial_parcels,
+            coalesce(sum(kept_pieces),0) as kept_pieces,
+            sum(case when missing_pieces > 0 then 1 else 0 end) as short_parcels,
+            coalesce(sum(missing_pieces),0) as missing_pieces,
             sum(case when $open then 1 else 0 end) as open_parcels,
             coalesce(sum(case when $open then piece_count else 0 end),0) as open_pieces,
             sum(case when $open and handed_over_at < ? then 1 else 0 end) as overdue_parcels,
@@ -69,7 +73,7 @@ class CourierController extends Controller {
     }
 
     public function dispatchPage() {
-        $orders = SalesOrder::with(['items:id,sales_order_id,quantity'])->where('status', 'confirmed')->doesntHave('shipment')
+        $orders = SalesOrder::with(['items:id,sales_order_id,quantity'])->where('status', 'packed')->doesntHave('shipment')
             ->oldest('id')->take(1000)->get(['id', 'customer', 'created_at']);
         return Inertia::render('Courier/Dispatch', [
             'couriers' => self::COURIERS,
@@ -82,6 +86,29 @@ class CourierController extends Controller {
         return redirect()->route('courier.batch', $b->id)->with('success', "Handover #{$b->id} saved: {$b->parcel_count} parcels, {$b->piece_count} pcs to ".(self::COURIERS[$b->courier] ?? $b->courier).'. Print the manifest for the courier to sign.');
     }
 
+    /* ---------------- Packing station ---------------- */
+    public function packPage() {
+        $today = now()->startOfDay();
+        return Inertia::render('Courier/Pack', [
+            'waiting' => SalesOrder::where('status', 'confirmed')->count(),
+            'packedToday' => SalesOrder::where('packed_at', '>=', $today)->count(),
+            'recent' => SalesOrder::where('status', 'packed')->latest('packed_at')->take(15)->get(['id', 'customer', 'packed_at']),
+        ]);
+    }
+    /** JSON: the lines to scan for one order. */
+    public function packOrder(Request $r) {
+        $id = (int) preg_replace('/\D/', '', (string) $r->query('order', ''));
+        $o = SalesOrder::with('items.product:id,sku,name,color,size,barcode')->find($id);
+        abort_unless($o, 404, "Order #$id not found.");
+        return response()->json(['id' => $o->id, 'status' => $o->status, 'customer' => $o->customer['name'] ?? '', 'phone' => $o->customer['phone'] ?? '',
+            'items' => $o->items->map(fn ($i) => ['product_id' => (int) $i->product_id, 'label' => $i->product->label, 'sku' => $i->product->sku,
+                'barcode' => $i->product->barcode, 'quantity' => (int) $i->quantity])->values()]);
+    }
+    public function packStore(Request $r, InventoryService $s) {
+        $o = $s->pack((int) $r->input('order_id'), $r->input('scans'), (int) $r->user()->id);
+        return response()->json(['id' => $o->id, 'status' => $o->status, 'packed_today' => SalesOrder::where('packed_at', '>=', now()->startOfDay())->count()]);
+    }
+
     public function returnsPage() {
         return Inertia::render('Courier/Returns', ['couriers' => self::COURIERS]);
     }
@@ -89,13 +116,14 @@ class CourierController extends Controller {
     public function parcel(Request $r) {
         $t = trim((string) $r->query('tracking', ''));
         abort_if($t === '' || strlen($t) > 120, 422, 'Scan a tracking ID.');
-        $s = Shipment::with(['order.items.product:id,name,color,size,sku'])->where('tracking_id', $t)
+        $s = Shipment::with(['order.items.product:id,name,color,size,sku,barcode'])->where('tracking_id', $t)
             ->when(array_key_exists((string) $r->query('courier'), self::COURIERS), fn ($q) => $q->where('courier', $r->query('courier')))->first();
         abort_unless($s, 404, "Tracking $t not found.");
         return response()->json([
             'shipment_id' => $s->id, 'order_id' => $s->sales_order_id, 'courier' => $s->courier, 'tracking_id' => $s->tracking_id, 'status' => $s->status,
             'pieces' => (int) $s->piece_count, 'customer' => $s->order->customer['name'] ?? '', 'handed_over_at' => $s->handed_over_at,
-            'items' => $s->order->items->map(fn ($i) => ['label' => $i->product->label, 'quantity' => (int) $i->quantity])->values(),
+            'items' => $s->order->items->map(fn ($i) => ['product_id' => (int) $i->product_id, 'label' => $i->product->label, 'sku' => $i->product->sku,
+                'barcode' => $i->product->barcode, 'quantity' => (int) $i->quantity])->values(),
         ]);
     }
     public function returnsStore(Request $r, InventoryService $s) {

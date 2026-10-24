@@ -40,7 +40,7 @@ export default function Dispatch({ couriers, orders, errors }: PageProps<{ couri
     const pickOrder = (raw: string) => {
         const id = parseInt(raw.replace(/\D/g, ''));
         const o = byId.get(id);
-        if (!o) return say(false, `Order #${raw} is not ready for handover (not confirmed, or already handed over).`);
+        if (!o) return say(false, `Order #${raw} is not ready for handover — it must be packed first (Packing station), or it was already handed over.`);
         if (inList.has(id)) return say(false, `Order #${id} is already in this handover.`);
         setOrderNo(String(id)); setMsg({ ok: true, text: `#${id} ${o.name} · ${o.pieces} pcs — now scan the courier tracking label.` });
         requestAnimationFrame(() => trackRef.current?.focus());

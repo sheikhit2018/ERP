@@ -10,6 +10,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::post('orders/{order}/cancel', [OrderController::class,'cancel'])->whereNumber('order');
     });
     Route::middleware('tenant.role:owner,warehouse')->group(function () {
+        Route::post('orders/{order}/pack', [OrderController::class,'pack'])->whereNumber('order');
         Route::post('orders/{order}/handover', [OrderController::class,'handover'])->whereNumber('order');
         Route::post('orders/{order}/delivered', [OrderController::class,'delivered'])->whereNumber('order');
     });

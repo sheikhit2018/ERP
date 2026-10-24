@@ -50,7 +50,7 @@ export default function ParcelImport({ ready, inList, listTrackings, onAdd }: Pr
             else if (!t) problem = 'no tracking ID';
             else if (inList.has(id) || seenO.has(id)) problem = 'order already added';
             else if (listTrackings.has(t) || seenT.has(t)) problem = 'tracking used twice';
-            else if (!ready.has(id)) problem = 'order not ready (not confirmed or already shipped)';
+            else if (!ready.has(id)) problem = 'order not packed yet, or already shipped';
             if (!problem) { seenO.add(id); seenT.add(t); }
             return { line: i + (header ? 2 : 1), id, rawO, t, problem };
         }).filter((x) => x.problem !== 'empty');

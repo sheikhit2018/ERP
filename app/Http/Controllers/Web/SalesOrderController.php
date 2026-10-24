@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class SalesOrderController extends Controller {
-    public const STATUSES = ['pending', 'confirmed', 'shipped', 'delivered', 'return_pending', 'returned', 'return_damaged', 'lost', 'cancelled'];
+    public const STATUSES = ['pending', 'confirmed', 'packed', 'shipped', 'delivered', 'partial_delivered', 'return_pending', 'returned', 'returned_short', 'return_damaged', 'lost', 'cancelled'];
 
     public function index(Request $r) {
         $status = $r->query('status');
@@ -70,7 +70,9 @@ class SalesOrderController extends Controller {
     public function cancel(Request $r, int $order, InventoryService $s) { $s->cancel($order, (int) $r->user()->id); return back()->with('success', 'Order cancelled and stock released.'); }
     public function handover(Request $r, int $order, InventoryService $s) {
         // Warehouse must scan every unit before it leaves (barcode check against the order lines).
-        if (!$r->filled('scans')) throw \Illuminate\Validation\ValidationException::withMessages(['scans' => 'Scan every item before handing over to the courier.']);
+        // Packed orders were scanned at the packing station; otherwise every piece must be scanned here.
+        $packed = SalesOrder::whereKey($order)->value('status') === 'packed';
+        if (!$packed && !$r->filled('scans')) throw \Illuminate\Validation\ValidationException::withMessages(['scans' => 'Scan every item before handing over to the courier.']);
         $s->handover($order, $r->only('courier', 'tracking_id', 'scans'), (int) $r->user()->id);
         return back()->with('success', 'Handed over to courier. Stock moved to transit.');
     }
