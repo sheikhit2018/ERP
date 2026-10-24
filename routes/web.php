@@ -75,6 +75,7 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::get('/courier/returns', [CourierController::class, 'returnsPage'])->name('courier.returns');
         Route::post('/courier/returns', [CourierController::class, 'returnsStore'])->name('courier.returns.store');
         Route::get('/courier/parcel', [CourierController::class, 'parcel'])->name('courier.parcel');
+        Route::get('/courier/parcels/by-product', [CourierController::class, 'parcelsByProduct'])->name('courier.parcels.product');
     });
     Route::middleware('tenant.role:qc,warehouse')->group(function () {
         Route::get('/returns/lookup', [StockInController::class, 'lookup'])->name('returns.lookup');

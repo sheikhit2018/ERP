@@ -137,6 +137,14 @@ class CourierBatchTest extends TestCase {
         $this->assertSame(3, $this->stock($v['Black M'], 'transit_stock'));
         $this->getJson($this->base.'/courier/parcel?tracking=PA&courier=pathao')->assertOk()->assertJsonPath('items.0.barcode', fn ($bc) => strlen($bc) === 13);
 
+        // Product-first return scanning: which parcels with this courier still hold that colour/size?
+        $find = fn ($code) => $this->getJson($this->base.'/courier/parcels/by-product?courier=pathao&code='.$code);
+        $bc = fn ($k) => DB::table('products')->where('id', $v[$k])->value('barcode');
+        $this->assertEqualsCanonicalizing(['PC', 'PD'], array_column($find($bc('Black M'))->assertOk()->json('parcels'), 'tracking_id'));
+        $find($bc('White L'))->assertOk()->assertJsonCount(1, 'parcels')->assertJsonPath('parcels.0.order_id', $b);
+        $this->getJson($this->base.'/courier/parcels/by-product?courier=steadfast&code='.$bc('White L'))->assertOk()->assertJsonCount(0, 'parcels');
+        $find('NOPE')->assertNotFound();
+
         $ret = fn (array $parcels) => $this->post_('/courier/returns', ['idempotency_key' => (string) Str::uuid(), 'courier' => 'pathao', 'parcels' => $parcels]);
         // Short without a reason, a foreign item, or too many pieces -> whole receipt refused.
         $ret([['tracking_id' => 'PA', 'items' => [['product_id' => $v['White M'], 'returned' => 1]]]])->assertSessionHasErrors('inventory');

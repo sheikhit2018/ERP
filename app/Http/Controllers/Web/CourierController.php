@@ -2,7 +2,7 @@
 namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
-use App\Models\{CourierBatch, SalesOrder, Shipment, User};
+use App\Models\{CourierBatch, Product, SalesOrder, Shipment, User};
 use App\Services\InventoryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -113,18 +113,38 @@ class CourierController extends Controller {
         return Inertia::render('Courier/Returns', ['couriers' => self::COURIERS]);
     }
     /** JSON lookup for the return scanner: what is in this parcel, and can it come back? */
+    private static function parcelJson(Shipment $s): array {
+        return [
+            'shipment_id' => $s->id, 'order_id' => $s->sales_order_id, 'courier' => $s->courier, 'tracking_id' => $s->tracking_id, 'status' => $s->status,
+            'pieces' => (int) $s->piece_count, 'customer' => $s->order->customer['name'] ?? '', 'phone' => $s->order->customer['phone'] ?? '',
+            'handed_over_at' => $s->handed_over_at,
+            'items' => $s->order->items->map(fn ($i) => ['product_id' => (int) $i->product_id, 'label' => $i->product->label, 'sku' => $i->product->sku,
+                'barcode' => $i->product->barcode, 'quantity' => (int) $i->quantity])->values(),
+        ];
+    }
     public function parcel(Request $r) {
         $t = trim((string) $r->query('tracking', ''));
         abort_if($t === '' || strlen($t) > 120, 422, 'Scan a tracking ID.');
         $s = Shipment::with(['order.items.product:id,name,color,size,sku,barcode'])->where('tracking_id', $t)
             ->when(array_key_exists((string) $r->query('courier'), self::COURIERS), fn ($q) => $q->where('courier', $r->query('courier')))->first();
         abort_unless($s, 404, "Tracking $t not found.");
-        return response()->json([
-            'shipment_id' => $s->id, 'order_id' => $s->sales_order_id, 'courier' => $s->courier, 'tracking_id' => $s->tracking_id, 'status' => $s->status,
-            'pieces' => (int) $s->piece_count, 'customer' => $s->order->customer['name'] ?? '', 'handed_over_at' => $s->handed_over_at,
-            'items' => $s->order->items->map(fn ($i) => ['product_id' => (int) $i->product_id, 'label' => $i->product->label, 'sku' => $i->product->sku,
-                'barcode' => $i->product->barcode, 'quantity' => (int) $i->quantity])->values(),
-        ]);
+        return response()->json(self::parcelJson($s));
+    }
+    /**
+     * Return scanning that starts with a product barcode (like Stock In): which parcels still with this courier
+     * contain that colour/size? One match opens it; several are shown for the user to pick by customer.
+     */
+    public function parcelsByProduct(Request $r) {
+        $code = trim((string) $r->query('code', ''));
+        abort_if($code === '' || strlen($code) > 64, 422, 'Scan a product barcode.');
+        $p = Product::where('barcode', $code)->first() ?? Product::where('sku', $code)->first();
+        abort_unless($p, 404, "$code is not a product barcode or tracking ID.");
+        $courier = array_key_exists((string) $r->query('courier'), self::COURIERS) ? $r->query('courier') : null;
+        $ships = Shipment::with(['order.items.product:id,name,color,size,sku,barcode'])
+            ->whereIn('status', ['shipped', 'lost'])->when($courier, fn ($q) => $q->where('courier', $courier))
+            ->whereHas('order.items', fn ($q) => $q->where('product_id', $p->id))
+            ->latest('handed_over_at')->take(50)->get();
+        return response()->json(['product' => ['id' => $p->id, 'label' => $p->label, 'barcode' => $p->barcode], 'parcels' => $ships->map(fn ($s) => self::parcelJson($s))->values()]);
     }
     public function returnsStore(Request $r, InventoryService $s) {
         $b = $s->returnBatch($r->all(), (int) $r->user()->id);
