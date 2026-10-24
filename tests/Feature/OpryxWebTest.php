@@ -178,6 +178,6 @@ class OpryxWebTest extends TestCase {
 
         $this->get_('/labels?style='.$style->id.'&copies=stock')->assertOk()
             ->assertInertia(fn ($p) => $p->component('Products/Labels')->where('copies', 'stock')->has('items', 9)->where('items.0.available', 1000));
-        $this->get_('/barcodes')->assertOk();
+        $this->get_('/barcodes')->assertNotFound();
     }
 }

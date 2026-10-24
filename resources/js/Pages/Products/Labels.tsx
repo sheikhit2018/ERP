@@ -30,7 +30,7 @@ export default function Labels({ items, copies: initial }: PageProps<{ items: It
             <style>{`@media print { @page { margin: 4mm; } body { background: #fff !important; } }`}</style>
             <div className="print:hidden">
                 <PageHeader title="Print barcode labels" subtitle="One barcode per colour + size. Set how many stickers each variant needs, then print on sticker roll or A4."
-                    actions={<><LinkButton variant="secondary" href="/barcodes">Barcode generator</LinkButton>
+                    actions={<><LinkButton variant="secondary" href="/products">Back to products</LinkButton>
                         <Button onClick={() => window.print()} disabled={!labels.length}>Print {num(total)} labels</Button></>} />
                 {items.length === 0 ? <Card><Empty>Nothing selected. Open Products and use “Print labels” on a product.</Empty></Card> : (
                     <Card className="mb-6">

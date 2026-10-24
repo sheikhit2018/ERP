@@ -23,7 +23,7 @@ export type PageProps<
     auth: { user: User };
     tenant: { name: string } | null;
     role: Role | null;
-    flash: { success?: string | null; error?: string | null };
+    flash: { success?: string | null; error?: string | null; report?: string[] | null };
     appName: string;
     errors: Record<string, string>;
 };

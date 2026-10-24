@@ -1,6 +1,6 @@
 <?php
 namespace App\Services;
-use App\Models\{ProductStyle, StockReceipt, Product, RawMaterial, BomItem, Bom, RawMaterialStock, FinishedGoodStock, ManufacturingOrder, ManufacturingConsumption,
+use App\Models\{CourierBatch, ProductStyle, StockReceipt, Product, RawMaterial, BomItem, Bom, RawMaterialStock, FinishedGoodStock, ManufacturingOrder, ManufacturingConsumption,
     SalesOrder, SalesOrderItem, Shipment, CourierReturn, ReturnItem, CourierLog, InventoryMovement};
 use App\Tenancy\TenantContext;
 use Illuminate\Support\Facades\{DB, Validator};
@@ -145,12 +145,12 @@ class InventoryService {
     private function log(Shipment $s, string $event, int $actor, array $payload = []): void {
         CourierLog::create(['shipment_id'=>$s->id, 'event'=>$event, 'payload'=>$payload, 'actor_id'=>$actor]);
     }
-    public function handover(int $id, array $data, int $actor): SalesOrder {
+    public function handover(int $id, array $data, int $actor, ?int $batchId = null): SalesOrder {
         $d = Validator::make($data, ['courier'=>'required|string|max:40|regex:/^[a-z0-9_-]+$/', 'tracking_id'=>'required|string|max:120'])->validate();
         $scans = $this->scanMap($data['scans'] ?? null);
         $d = ['courier'=>$d['courier'], 'tracking_id'=>trim($d['tracking_id'])];
         if ($d['tracking_id'] === '') $this->fail('Tracking ID is required.');
-        return $this->transaction(function () use ($id, $d, $actor, $scans) {
+        return $this->transaction(function () use ($id, $d, $actor, $scans, $batchId) {
             $o = SalesOrder::whereKey($id)->lockForUpdate()->firstOrFail();
             $old = $o->shipment()->first();
             if ($old) {
@@ -160,7 +160,8 @@ class InventoryService {
             abort_unless($o->status === 'confirmed', 409, 'Confirm the order before handover.');
             if ($scans !== null) $this->assertScansMatch($o->items()->get()->mapWithKeys(fn ($i) => [(int)$i->product_id => (int)$i->quantity])->all(), $scans);
             abort_if(Shipment::where('courier',$d['courier'])->where('tracking_id',$d['tracking_id'])->exists(), 409, 'Tracking ID already assigned.');
-            $s = Shipment::create($d + ['sales_order_id'=>$id, 'status'=>'shipped', 'handed_over_at'=>now()]);
+            $s = Shipment::create($d + ['sales_order_id'=>$id, 'status'=>'shipped', 'handed_over_at'=>now(),
+                'piece_count'=>(int) $o->items()->sum('quantity'), 'dispatch_batch_id'=>$batchId]);
             foreach ($o->items()->orderBy('product_id')->get() as $i) {
                 $stock = $this->stock((int)$i->product_id);
                 $this->move($stock, 'reserved_stock', -(int)$i->quantity, 'handover', "SHIPMENT:$s->id", $actor);
@@ -179,7 +180,7 @@ class InventoryService {
             foreach ($o->items()->orderBy('product_id')->get() as $i) {
                 $this->move($this->stock((int)$i->product_id), 'transit_stock', -(int)$i->quantity, 'delivered', "SHIPMENT:$s->id", $actor);
             }
-            $s->status = 'delivered'; $s->save(); $o->status = 'delivered'; $o->save();
+            $s->status = 'delivered'; $s->delivered_at = now(); $s->save(); $o->status = 'delivered'; $o->save();
             $this->log($s, 'delivered', $actor); return $o;
         });
     }
@@ -197,7 +198,7 @@ class InventoryService {
             abort_unless($o->status === 'shipped' && $s->status === 'shipped', 409, 'This shipment is not eligible for courier return.');
             $r = CourierReturn::create(['shipment_id'=>$s->id, 'status'=>'pending', 'received_by'=>$actor]);
             foreach ($o->items as $i) ReturnItem::create(['courier_return_id'=>$r->id, 'sales_order_item_id'=>$i->id, 'quantity'=>$i->quantity]);
-            $o->status = 'return_pending'; $o->save(); $s->status = 'return_pending'; $s->save();
+            $o->status = 'return_pending'; $o->save(); $s->status = 'return_pending'; $s->returned_at = now(); $s->save();
             $this->log($s, 'return_scanned', $actor);
             // Logical transit includes unapproved returns. These units remain unsellable until QC.
             return $r;
@@ -479,5 +480,154 @@ class InventoryService {
             }
             return $receipt;
         });
+    }
+
+    /* ------------------------------------------------------------------
+     | Courier batches: bulk handover, bulk return receipt, delivered, lost.
+     | Every parcel is a shipment; a batch only groups them and freezes the
+     | parcel / piece counts the courier signed for.
+     * ------------------------------------------------------------------ */
+
+    private const COURIER_RULE = 'required|string|max:40|regex:/^[a-z0-9_-]+$/';
+
+    /** Shipments by tracking id for one courier, keyed by tracking id. */
+    private function shipmentsByTracking(string $courier, array $trackings) {
+        return Shipment::where('courier', $courier)->whereIn('tracking_id', $trackings)->get()->keyBy('tracking_id');
+    }
+
+    /**
+     * Hand many confirmed orders to one courier at once.
+     * parcels: [{order_id, tracking_id}]. All-or-nothing: any problem rejects the whole batch with a full list.
+     */
+    public function dispatchBatch(array $data, int $actor): CourierBatch {
+        $d = Validator::make($data, [
+            'idempotency_key'=>'required|uuid', 'courier'=>self::COURIER_RULE, 'note'=>'nullable|string|max:190',
+            'parcels'=>'required|array|min:1|max:2000',
+            'parcels.*.order_id'=>'required|integer|min:1|distinct', 'parcels.*.tracking_id'=>'required|string|max:120',
+        ])->validate();
+        $parcels = [];
+        foreach ($d['parcels'] as $p) $parcels[(int) $p['order_id']] = trim((string) $p['tracking_id']);
+        ksort($parcels);
+        $dupe = array_diff_assoc($parcels, array_unique($parcels));
+        if ($dupe) $this->fail('Same tracking ID on more than one parcel: '.implode(', ', array_unique($dupe)));
+        if (in_array('', $parcels, true)) $this->fail('Every parcel needs a tracking ID.');
+        $hash = $this->hash(['dispatch', $d['courier'], $d['note'] ?? null, $parcels]);
+
+        return $this->transaction(function () use ($d, $parcels, $hash, $actor) {
+            $old = CourierBatch::where('idempotency_key', $d['idempotency_key'])->first();
+            if ($old) return $this->replay($old, $hash);
+
+            $orders = SalesOrder::whereIn('id', array_keys($parcels))->lockForUpdate()->get()->keyBy('id');
+            $taken = $this->shipmentsByTracking($d['courier'], array_values($parcels));
+            $problems = [];
+            foreach ($parcels as $oid => $tracking) {
+                $o = $orders[$oid] ?? null;
+                if (!$o) $problems[] = "#$oid not found";
+                elseif ($o->status !== 'confirmed') $problems[] = "#$oid is {$o->status} (only confirmed orders can be handed over)";
+                if (isset($taken[$tracking])) $problems[] = "tracking $tracking already used on order #{$taken[$tracking]->sales_order_id}";
+            }
+            if ($problems) $this->fail('Batch not saved. Fix: '.implode('; ', $problems).'.');
+
+            $pieces = (int) SalesOrderItem::whereIn('sales_order_id', array_keys($parcels))->sum('quantity');
+            $batch = CourierBatch::create(['type'=>'dispatch', 'courier'=>$d['courier'], 'parcel_count'=>count($parcels), 'piece_count'=>$pieces,
+                'note'=>$d['note'] ?? null, 'idempotency_key'=>$d['idempotency_key'], 'request_hash'=>$hash, 'created_by'=>$actor]);
+            foreach ($parcels as $oid => $tracking) {
+                $this->handover($oid, ['courier'=>$d['courier'], 'tracking_id'=>$tracking], $actor, $batch->id);
+            }
+            return $batch;
+        });
+    }
+
+    /**
+     * Receive many returned parcels from one courier at once and put them back in stock.
+     * parcels: [{tracking_id, damaged?}]. Good parcels -> available stock, damaged -> damaged stock.
+     * A parcel earlier marked "lost" that turns up again is accepted too.
+     */
+    public function returnBatch(array $data, int $actor): CourierBatch {
+        $d = Validator::make($data, [
+            'idempotency_key'=>'required|uuid', 'courier'=>self::COURIER_RULE, 'note'=>'nullable|string|max:190',
+            'parcels'=>'required|array|min:1|max:2000',
+            'parcels.*.tracking_id'=>'required|string|max:120|distinct', 'parcels.*.damaged'=>'nullable|boolean',
+        ])->validate();
+        $parcels = [];
+        foreach ($d['parcels'] as $p) $parcels[trim((string) $p['tracking_id'])] = !empty($p['damaged']);
+        ksort($parcels);
+        $hash = $this->hash(['return', $d['courier'], $d['note'] ?? null, $parcels]);
+
+        return $this->transaction(function () use ($d, $parcels, $hash, $actor) {
+            $old = CourierBatch::where('idempotency_key', $d['idempotency_key'])->first();
+            if ($old) return $this->replay($old, $hash);
+
+            $ships = $this->shipmentsByTracking($d['courier'], array_keys($parcels));
+            $problems = [];
+            foreach ($parcels as $tracking => $_) {
+                $s = $ships[$tracking] ?? null;
+                if (!$s) $problems[] = "$tracking not found for {$d['courier']}";
+                elseif (!in_array($s->status, ['shipped', 'lost'], true)) $problems[] = "$tracking (order #{$s->sales_order_id}) is already {$s->status}";
+            }
+            if ($problems) $this->fail('Return batch not saved. Fix: '.implode('; ', $problems).'.');
+
+            $batch = CourierBatch::create(['type'=>'return', 'courier'=>$d['courier'], 'parcel_count'=>count($parcels),
+                'piece_count'=>(int) $ships->sum('piece_count'), 'note'=>$d['note'] ?? null,
+                'idempotency_key'=>$d['idempotency_key'], 'request_hash'=>$hash, 'created_by'=>$actor]);
+            foreach ($parcels as $tracking => $damaged) {
+                $s = $ships[$tracking];
+                if ($s->status === 'lost') $this->unLose($s, $actor);
+                $r = $this->scan(['courier_tracking_id'=>$tracking, 'courier'=>$d['courier']], $actor);
+                $r->return_batch_id = $batch->id; $r->save();
+                $this->qc($r->id, $damaged ? 'DAMAGED' : 'QC_PASSED', $actor);
+            }
+            return $batch;
+        });
+    }
+
+    /**
+     * Mark parcels delivered from a list of tracking IDs (e.g. pasted from the courier's payment statement).
+     * Not all-or-nothing: valid parcels are delivered, the rest are reported back.
+     * @return array{delivered:int, already:int, problems:string[]}
+     */
+    public function markDeliveredBulk(array $data, int $actor): array {
+        $d = Validator::make($data, ['courier'=>self::COURIER_RULE, 'tracking_ids'=>'required|array|min:1|max:5000', 'tracking_ids.*'=>'required|string|max:120'])->validate();
+        $ids = array_values(array_unique(array_filter(array_map(fn ($t) => trim((string) $t), $d['tracking_ids']))));
+        $ships = $this->shipmentsByTracking($d['courier'], $ids);
+        $out = ['delivered'=>0, 'already'=>0, 'problems'=>[]];
+        foreach ($ids as $t) {
+            $s = $ships[$t] ?? null;
+            if (!$s) { $out['problems'][] = "$t: not found for {$d['courier']}"; continue; }
+            if ($s->status === 'delivered') { $out['already']++; continue; }
+            if ($s->status === 'lost') $this->transaction(fn () => $this->unLose(Shipment::whereKey($s->id)->lockForUpdate()->first(), $actor));
+            elseif ($s->status !== 'shipped') { $out['problems'][] = "$t (order #{$s->sales_order_id}): already {$s->status}"; continue; }
+            $this->delivered((int) $s->sales_order_id, $actor);
+            $out['delivered']++;
+        }
+        return $out;
+    }
+
+    /** Courier lost the parcel: its pieces leave transit for good (claim it from the courier). */
+    public function markLost(int $shipmentId, int $actor): Shipment {
+        return $this->transaction(function () use ($shipmentId, $actor) {
+            $s = Shipment::whereKey($shipmentId)->lockForUpdate()->firstOrFail();
+            if ($s->status === 'lost') return $s;
+            abort_unless($s->status === 'shipped', 409, 'Only parcels still with the courier can be marked lost.');
+            $o = $s->order()->lockForUpdate()->firstOrFail();
+            foreach ($o->items()->orderBy('product_id')->get() as $i) {
+                $this->move($this->stock((int) $i->product_id), 'transit_stock', -(int) $i->quantity, 'courier_lost', "SHIPMENT:$s->id", $actor);
+            }
+            $s->status = 'lost'; $s->lost_at = now(); $s->save();
+            $o->status = 'lost'; $o->save();
+            $this->log($s, 'lost', $actor);
+            return $s;
+        });
+    }
+
+    /** A "lost" parcel turned up: put its pieces back in transit and reopen it. Call inside transaction(). */
+    private function unLose(Shipment $s, int $actor): void {
+        $o = $s->order()->lockForUpdate()->firstOrFail();
+        foreach ($o->items()->orderBy('product_id')->get() as $i) {
+            $this->move($this->stock((int) $i->product_id), 'transit_stock', (int) $i->quantity, 'courier_found', "SHIPMENT:$s->id", $actor);
+        }
+        $s->status = 'shipped'; $s->lost_at = null; $s->save();
+        $o->status = 'shipped'; $o->save();
+        $this->log($s, 'found', $actor);
     }
 }

@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Web\{StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
+use App\Http\Controllers\Web\{CourierController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
     RawMaterialController, ReturnPageController, SalesOrderController, StockLedgerController, TeamController};
 use App\Http\Controllers\CourierReturnController;
 use Illuminate\Support\Facades\Route;
@@ -17,7 +17,6 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::get('/stock-ledger', StockLedgerController::class)->name('stock.ledger');
         Route::get('/scan/lookup', [StockInController::class, 'lookup'])->name('scan.lookup');
         Route::get('/labels', [ProductController::class, 'labels'])->name('products.labels');
-        Route::get('/barcodes', [ProductController::class, 'generator'])->name('barcodes.generator');
     });
     Route::middleware('tenant.role:warehouse')->group(function () {
         Route::post('/products', [ProductController::class, 'store'])->name('products.store');
@@ -56,6 +55,24 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::post('/orders/{order}/delivered', [SalesOrderController::class, 'delivered'])->whereNumber('order')->name('orders.delivered');
     });
 
+    // Courier hub: bulk handover, bulk returns, delivered list, lost parcels, reconciliation.
+    Route::middleware('tenant.role:sales,warehouse,qc')->group(function () {
+        Route::get('/courier', [CourierController::class, 'index'])->name('courier.index');
+        Route::get('/courier/batches/{batch}', [CourierController::class, 'batch'])->whereNumber('batch')->name('courier.batch');
+    });
+    Route::middleware('tenant.role:warehouse')->group(function () {
+        Route::get('/courier/dispatch', [CourierController::class, 'dispatchPage'])->name('courier.dispatch');
+        Route::post('/courier/dispatch', [CourierController::class, 'dispatchStore'])->name('courier.dispatch.store');
+        Route::get('/courier/delivered', [CourierController::class, 'deliveredPage'])->name('courier.delivered');
+        Route::post('/courier/delivered', [CourierController::class, 'deliveredStore'])->name('courier.delivered.store');
+        Route::post('/courier/parcels/{shipment}/lost', [CourierController::class, 'lost'])->whereNumber('shipment')->name('courier.lost');
+        Route::post('/courier/parcels/{shipment}/delivered', [CourierController::class, 'deliveredOne'])->whereNumber('shipment')->name('courier.delivered.one');
+    });
+    Route::middleware('tenant.role:qc,warehouse')->group(function () {
+        Route::get('/courier/returns', [CourierController::class, 'returnsPage'])->name('courier.returns');
+        Route::post('/courier/returns', [CourierController::class, 'returnsStore'])->name('courier.returns.store');
+        Route::get('/courier/parcel', [CourierController::class, 'parcel'])->name('courier.parcel');
+    });
     Route::middleware('tenant.role:qc,warehouse')->group(function () {
         Route::get('/returns/lookup', [StockInController::class, 'lookup'])->name('returns.lookup');
         Route::get('/returns', ReturnPageController::class)->name('returns.index');

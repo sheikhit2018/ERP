@@ -59,8 +59,4 @@ class ProductController extends Controller {
         return Inertia::render('Products/Labels', ['items' => $items->map(fn ($p) => $p->only('id', 'sku', 'name', 'color', 'size', 'barcode', 'price_minor')
             + ['available' => (int) ($p->stock->available_stock ?? 0)])->values(), 'copies' => $r->query('copies') === 'stock' ? 'stock' : 'one']);
     }
-    /** Free barcode generator: any text / number, sequences, carton & shelf labels. Rendered fully in the browser. */
-    public function generator() {
-        return Inertia::render('Products/Generator');
-    }
 }

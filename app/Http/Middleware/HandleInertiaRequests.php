@@ -39,6 +39,7 @@ class HandleInertiaRequests extends Middleware
             'role' => fn () => $request->attributes->get('tenant_role'),
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
+                'report' => fn () => $request->session()->get('report'),
                 'error' => fn () => $request->session()->get('error'),
             ],
             'appName' => config('app.name'),

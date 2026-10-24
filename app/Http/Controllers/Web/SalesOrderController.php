@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class SalesOrderController extends Controller {
-    public const STATUSES = ['pending', 'confirmed', 'shipped', 'delivered', 'return_pending', 'returned', 'return_damaged', 'cancelled'];
+    public const STATUSES = ['pending', 'confirmed', 'shipped', 'delivered', 'return_pending', 'returned', 'return_damaged', 'lost', 'cancelled'];
 
     public function index(Request $r) {
         $status = $r->query('status');
