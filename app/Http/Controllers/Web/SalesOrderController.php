@@ -67,6 +67,10 @@ class SalesOrderController extends Controller {
         $logs = $o->shipment ? \App\Models\CourierLog::where('shipment_id', $o->shipment->id)->latest('id')->get() : [];
         return Inertia::render('Orders/Show', ['order' => $o, 'logs' => $logs]);
     }
+    public function invoice(int $order) {
+        $o = SalesOrder::with(['items.product:id,sku,name,color,size', 'shipment:id,sales_order_id,courier,tracking_id', 'payments'])->findOrFail($order);
+        return Inertia::render('Orders/Invoice', ['order' => $o]);
+    }
     public function confirm(int $order, InventoryService $s) { $s->confirm($order); return back()->with('success', 'Order confirmed.'); }
     public function cancel(Request $r, int $order, InventoryService $s) { $s->cancel($order, (int) $r->user()->id); return back()->with('success', 'Order cancelled and stock released.'); }
     public function handover(Request $r, int $order, InventoryService $s) {

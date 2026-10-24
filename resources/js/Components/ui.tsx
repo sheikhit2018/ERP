@@ -1,8 +1,11 @@
 import { Link } from '@inertiajs/react';
 import { InputHTMLAttributes, PropsWithChildren, ReactNode, SelectHTMLAttributes, forwardRef } from 'react';
 import { STATUS_LABEL, statusTone } from '@/lib/format';
+import { useT } from '@/lib/i18n';
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
+    const t = useT();
+    title = t(title);
     return (
         <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>

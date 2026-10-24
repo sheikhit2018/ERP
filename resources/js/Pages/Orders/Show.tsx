@@ -43,7 +43,7 @@ export default function ShowOrder({ order, logs, role }: PageProps<{ order: Orde
             <PageHeader title={`Order #${order.id}`} subtitle={`${dateTime(order.created_at)} · source: ${order.source}`}
                 actions={<>
                     <StatusBadge status={order.status} />
-                    <Button variant="secondary" className="print:hidden" onClick={() => window.print()}>Print invoice</Button>
+                    <Button variant="secondary" className="print:hidden" onClick={() => window.open(`/orders/${order.id}/invoice`, "_blank")}>Print invoice</Button>
                     <div className="w-40" title="Scan at the packing station"><BarcodeSvg value={String(order.id)} fmt="CODE128" height={34} /></div>
                 </>} />
 

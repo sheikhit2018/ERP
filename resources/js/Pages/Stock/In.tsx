@@ -72,7 +72,7 @@ export default function StockIn({ receipts, users, errors }: PageProps<{ receipt
                 <div className="space-y-5 lg:col-span-2">
                     <Card>
                         <form onSubmit={scan} className="flex gap-2 p-4">
-                            <Input ref={scanRef} value={code} onChange={(e) => setCode(e.target.value)} placeholder="Scan barcode or type SKU / style code, press Enter" autoComplete="off" className="text-base" />
+                            <Input data-scan ref={scanRef} value={code} onChange={(e) => setCode(e.target.value)} placeholder="Scan barcode or type SKU / style code, press Enter" autoComplete="off" className="text-base" />
                             <Button disabled={busy || !code.trim()}>Find</Button>
                         </form>
                         {flash && <div role="status" className={`mx-4 mb-4 rounded-lg px-3 py-2 text-sm ${flash.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`}>{flash.text}</div>}

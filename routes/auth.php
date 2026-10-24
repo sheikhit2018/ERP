@@ -11,6 +11,8 @@ use App\Http\Controllers\Auth\VerifyEmailController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('guest')->group(function () {
+    Route::get('two-factor-challenge', [\App\Http\Controllers\Web\SecurityController::class, 'challenge'])->name('two-factor.challenge');
+    Route::post('two-factor-challenge', [\App\Http\Controllers\Web\SecurityController::class, 'verifyChallenge'])->middleware('throttle:20,1');
     Route::get('login', [AuthenticatedSessionController::class, 'create'])
         ->name('login');
 

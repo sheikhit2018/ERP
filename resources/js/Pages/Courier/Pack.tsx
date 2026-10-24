@@ -87,7 +87,7 @@ export default function Pack({ waiting, packedToday, recent }: PageProps<{ waiti
                         <Card>
                             <form onSubmit={open} className="p-5">
                                 <label className="mb-1 block text-sm font-medium text-slate-700">Order number</label>
-                                <Input ref={input} autoFocus value={no} onChange={(e) => setNo(e.target.value)} placeholder="Scan the order slip or type the order no." className="text-lg" />
+                                <Input data-scan ref={input} autoFocus value={no} onChange={(e) => setNo(e.target.value)} placeholder="Scan the order slip or type the order no." className="text-lg" />
                             </form>
                             {msg && <p className={`mx-5 mb-5 rounded-lg px-3 py-2 text-sm ${msg.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`}>{msg.text}</p>}
                         </Card>

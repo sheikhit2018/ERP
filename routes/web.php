@@ -1,16 +1,25 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Web\{HrController, StoreController, AccountsController, PurchaseController, CodController, OrderImportController, SettingsController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
+use App\Http\Controllers\Web\{SecurityController, PlatformController, HrController, StoreController, AccountsController, PurchaseController, CodController, OrderImportController, SettingsController, ReportController, CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
     RawMaterialController, ReturnPageController, SalesOrderController, StockLedgerController, TeamController};
 use App\Http\Controllers\CourierReturnController;
 use Illuminate\Support\Facades\Route;
 
+// Self-service sign-up (only on OPRYX_SIGNUP_HOST; 404 elsewhere).
+Route::get('/signup', [\App\Http\Controllers\SignupController::class, 'create'])->name('signup');
+Route::post('/signup', [\App\Http\Controllers\SignupController::class, 'store'])->middleware('throttle:5,10');
+
 Route::get('/', fn () => auth()->check() ? redirect()->route('dashboard') : redirect()->route('login'));
 
 // Every ERP screen: resolve company from the domain -> require login -> require active membership/role.
-Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
+Route::middleware(['tenant', 'auth', 'tenant.role', 'tenant.billing'])->group(function () {
     Route::get('/dashboard', DashboardController::class)->name('dashboard');
+    Route::get('/profile/two-factor', [SecurityController::class, 'twoFactor'])->name('two-factor');
+    Route::post('/profile/two-factor', [SecurityController::class, 'twoFactorStart'])->name('two-factor.start');
+    Route::post('/profile/two-factor/confirm', [SecurityController::class, 'twoFactorConfirm'])->name('two-factor.confirm');
+    Route::delete('/profile/two-factor', [SecurityController::class, 'twoFactorDisable'])->name('two-factor.disable');
+    Route::post('/profile/locale', [SecurityController::class, 'locale'])->name('locale');
 
     Route::middleware('tenant.role:sales,warehouse,manufacturer')->group(function () {
         Route::get('/products', [ProductController::class, 'index'])->name('products.index');
@@ -58,6 +67,7 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::get('/customers/risk', [CustomerController::class, 'risk'])->name('customers.risk');
         Route::get('/orders', [SalesOrderController::class, 'index'])->name('orders.index');
         Route::get('/orders/{order}', [SalesOrderController::class, 'show'])->whereNumber('order')->name('orders.show');
+        Route::get('/orders/{order}/invoice', [SalesOrderController::class, 'invoice'])->whereNumber('order')->name('orders.invoice');
     });
     Route::middleware('tenant.role:sales')->group(function () {
         Route::get('/reports', ReportController::class)->name('reports.index');
@@ -151,6 +161,9 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
     Route::middleware('tenant.role:owner')->group(function () {
         Route::post('/hr/employees/{employee}/advance', [HrController::class, 'advance'])->whereNumber('employee')->name('hr.advance');
         Route::get('/hr/payroll', [HrController::class, 'payroll'])->name('hr.payroll');
+        Route::get('/billing', [SecurityController::class, 'billing'])->name('billing');
+        Route::get('/audit', [SecurityController::class, 'audit'])->name('audit');
+        Route::get('/export', [SecurityController::class, 'export'])->name('export');
         Route::post('/hr/payroll', [HrController::class, 'pay'])->name('hr.payroll.pay');
         Route::get('/accounts', [AccountsController::class, 'index'])->name('accounts.index');
         Route::post('/accounts/entries', [AccountsController::class, 'store'])->name('accounts.store');
@@ -159,6 +172,7 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
         Route::post('/accounts/accounts', [AccountsController::class, 'saveAccount'])->name('accounts.save');
         Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
         Route::post('/settings', [SettingsController::class, 'update'])->name('settings.update');
+        Route::post('/settings/logo', [SettingsController::class, 'logo'])->name('settings.logo');
         Route::post('/settings/sms-test', [SettingsController::class, 'smsTest'])->name('settings.sms-test');
         Route::post('/settings/courier-test', [SettingsController::class, 'courierTest'])->name('settings.courier-test');
         Route::get('/team', [TeamController::class, 'index'])->name('team.index');
@@ -168,6 +182,17 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+});
+
+// Platform (SaaS operator) — super admins only, reachable from any company domain they are logged in on.
+Route::middleware(['tenant', 'auth', 'super'])->prefix('platform')->group(function () {
+    Route::get('/', [PlatformController::class, 'index'])->name('platform.index');
+    Route::post('/tenants', [PlatformController::class, 'create'])->name('platform.create');
+    Route::get('/tenants/{tenant}', [PlatformController::class, 'show'])->whereNumber('tenant')->name('platform.show');
+    Route::put('/tenants/{tenant}', [PlatformController::class, 'update'])->whereNumber('tenant')->name('platform.update');
+    Route::post('/tenants/{tenant}/payments', [PlatformController::class, 'payment'])->whereNumber('tenant')->name('platform.payment');
+    Route::post('/tenants/{tenant}/domains', [PlatformController::class, 'domain'])->whereNumber('tenant')->name('platform.domain');
+    Route::post('/plans', [PlatformController::class, 'savePlan'])->name('platform.plans');
 });
 
 require __DIR__.'/auth.php';

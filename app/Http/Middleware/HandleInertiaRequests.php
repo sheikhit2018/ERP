@@ -32,11 +32,13 @@ class HandleInertiaRequests extends Middleware
         return [
             ...parent::share($request),
             'auth' => [
-                'user' => $request->user() ? $request->user()->only('id', 'name', 'email') : null,
+                'user' => $request->user() ? $request->user()->only('id', 'name', 'email', 'is_super_admin', 'locale') : null,
             ],
             // Lazy: evaluated during render, inside the tenant middleware.
             'tenant' => fn () => ($t = $request->attributes->get('tenant')) ? ['name' => $t->name] : null,
             'role' => fn () => $request->attributes->get('tenant_role'),
+            'subscription' => fn () => ($t = $request->attributes->get('tenant')) ? \App\Support\Subscription::state((int) $t->id) : null,
+            'brand' => fn () => ($t = $request->attributes->get('tenant')) ? \App\Support\Brand::get((int) $t->id) : null,
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
                 'report' => fn () => $request->session()->get('report'),

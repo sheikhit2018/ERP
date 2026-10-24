@@ -1,9 +1,11 @@
 import { Wordmark } from '@/Components/ApplicationLogo';
 import { Role } from '@/types';
+import { useT } from '@/lib/i18n';
+import CameraScan from '@/Components/CameraScan';
 import { Link, router, usePage } from '@inertiajs/react';
 import { PropsWithChildren, ReactNode, useEffect, useState } from 'react';
 
-type NavItem = { label: string; href: string; match: string; roles?: Role[]; icon: string };
+type NavItem = { label: string; href: string; match: string; roles?: Role[]; icon: string; superOnly?: boolean };
 type NavGroup = { title: string; items: NavItem[] };
 
 // Simple inline icons (24px stroke paths) keep the bundle small.
@@ -56,7 +58,10 @@ const NAV: NavGroup[] = [
         { label: 'Staff', href: '/hr/employees', match: 'hr.employees*', roles: ['manager'], icon: I.team },
         { label: 'Payroll', href: '/hr/payroll', match: 'hr.payroll*', roles: ['owner'], icon: I.money }] },
     { title: 'Company', items: [{ label: 'Team & roles', href: '/team', match: 'team.*', roles: ['owner'], icon: I.team },
-        { label: 'Settings', href: '/settings', match: 'settings.*', roles: ['owner'], icon: I.gear }] },
+        { label: 'Settings', href: '/settings', match: 'settings.*', roles: ['owner'], icon: I.gear },
+        { label: 'Plan & billing', href: '/billing', match: 'billing', roles: ['owner'], icon: I.money },
+        { label: 'Activity log', href: '/audit', match: 'audit', roles: ['owner'], icon: I.ledger },
+        { label: 'Platform admin', href: '/platform', match: 'platform.*', icon: I.chart, superOnly: true }] },
 ];
 
 function allowed(role: Role | null, roles?: Role[]) {
@@ -82,31 +87,34 @@ function Flash() {
 }
 
 export default function Authenticated({ children, header }: PropsWithChildren<{ header?: ReactNode }>) {
-    const { auth, tenant, role } = usePage().props;
+    const { auth, tenant, role, subscription, brand } = usePage().props;
+    const t = useT();
     const [open, setOpen] = useState(false);
+    const lang = (auth.user.locale || brand?.locale || 'en') === 'bn' ? 'bn' : 'en';
     useEffect(() => router.on('navigate', () => setOpen(false)), []);
 
     const sidebar = (
         <div className="flex h-full flex-col bg-ink-900 text-slate-300">
             <div className="flex h-16 items-center px-5"><Link href="/dashboard"><Wordmark dark /></Link></div>
-            <div className="mx-4 mb-4 rounded-lg bg-ink-800 px-3 py-2">
-                <div className="truncate text-sm font-semibold text-white">{tenant?.name ?? '—'}</div>
-                <div className="text-xs capitalize text-slate-400">{role}</div>
+            <div className="mx-4 mb-4 flex items-center gap-2 rounded-lg bg-ink-800 px-3 py-2">
+                {brand?.logo && <img src={brand.logo} alt="" className="h-8 w-8 shrink-0 rounded bg-white object-contain p-0.5" />}
+                <div className="min-w-0"><div className="truncate text-sm font-semibold text-white">{tenant?.name ?? '—'}</div>
+                <div className="text-xs capitalize text-slate-400">{role}</div></div>
             </div>
             <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 pb-6">
                 {NAV.map((g) => {
-                    const items = g.items.filter((i) => allowed(role, i.roles));
+                    const items = g.items.filter((i) => (i.superOnly ? !!auth.user.is_super_admin : allowed(role, i.roles)));
                     if (!items.length) return null;
                     return (
                         <div key={g.title}>
-                            <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">{g.title}</div>
+                            <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">{t(g.title)}</div>
                             {items.map((i) => {
                                 const active = route().current(i.match);
                                 return (
                                     <Link key={i.href} href={i.href}
                                         className={`flex items-center gap-3 rounded-lg px-2.5 py-1.5 text-sm font-medium transition ${active ? 'bg-brand-600/15 text-brand-300' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}>
                                         <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={i.icon} /></svg>
-                                        {i.label}
+                                        {t(i.label)}
                                     </Link>
                                 );
                             })}
@@ -119,7 +127,12 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
                     <span className="font-medium text-white">{auth.user.name}</span>
                     <span className="block truncate text-xs text-slate-400">{auth.user.email}</span>
                 </Link>
-                <Link href={route('logout')} method="post" as="button" className="mt-1 w-full rounded-lg px-2.5 py-2 text-left text-sm text-slate-400 hover:bg-white/5 hover:text-white">Log out</Link>
+                <div className="mt-1 flex items-center justify-between gap-1 px-1">
+                    <Link href="/profile/two-factor" className="rounded px-1.5 py-1 text-xs text-slate-400 hover:text-white">{t('Two-factor login')}</Link>
+                    <div className="inline-flex rounded bg-white/5 p-0.5 text-[11px]" title={t('Language')}>{(['en', 'bn'] as const).map((l) => (
+                        <button key={l} onClick={() => router.post('/profile/locale', { locale: l }, { preserveScroll: true, preserveState: true })} className={`rounded px-1.5 py-0.5 ${lang === l ? 'bg-white/15 text-white' : 'text-slate-400'}`}>{l === 'en' ? 'EN' : 'বাং'}</button>))}</div>
+                </div>
+                <Link href={route('logout')} method="post" as="button" className="mt-1 w-full rounded-lg px-2.5 py-2 text-left text-sm text-slate-400 hover:bg-white/5 hover:text-white">{t('Log out')}</Link>
             </div>
         </div>
     );
@@ -142,9 +155,16 @@ export default function Authenticated({ children, header }: PropsWithChildren<{ 
                 </header>
                 <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
                     {header && <div className="mb-6">{header}</div>}
+                    {subscription?.plan && (subscription.read_only || (subscription.days_left !== null && subscription.days_left <= 7)) && (
+                        <div className={`mb-5 flex flex-wrap items-center justify-between gap-2 rounded-lg px-4 py-2.5 text-sm ring-1 ring-inset print:hidden ${subscription.read_only ? 'bg-rose-50 text-rose-800 ring-rose-200' : 'bg-amber-50 text-amber-800 ring-amber-200'}`}>
+                            <span>{subscription.read_only ? t('Subscription expired — read-only. Renew to keep working.') : `${subscription.days_left} ${t(subscription.status === 'trial' ? 'days left in your trial' : 'days left on your plan')}`}</span>
+                            {role === 'owner' && <Link href="/billing" className="font-semibold underline">{t('View plan')}</Link>}
+                        </div>
+                    )}
                     <Flash />
                     {children}
                 </main>
+                <CameraScan />
             </div>
         </div>
     );

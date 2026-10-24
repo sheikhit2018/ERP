@@ -24,5 +24,11 @@
         "typescript": "^5.7.2",
         "vite": "^7.0.7",
         "ziggy-js": "^2.6.5"
+    },
+    "dependencies": {
+        "@types/qrcode": "^1.5.5",
+        "@zxing/browser": "^0.1.5",
+        "@zxing/library": "^0.21.3",
+        "qrcode": "^1.5.4"
     }
 }

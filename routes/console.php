@@ -33,3 +33,16 @@ Artisan::command('opryx:courier-sync', function () {
     }
 })->purpose('Sync parcel statuses from courier APIs');
 Schedule::command('opryx:courier-sync')->hourly()->withoutOverlapping();
+
+// Make (or remove) a platform super admin: php artisan opryx:super-admin you@example.com [--remove]
+Artisan::command('opryx:super-admin {email} {--remove}', function (string $email) {
+    $n = DB::table('users')->where('email', strtolower($email))->update(['is_super_admin' => !$this->option('remove')]);
+    $n ? $this->info(($this->option('remove') ? 'Removed' : 'Granted').' super admin for '.$email) : $this->error('No user with that email.');
+})->purpose('Grant or remove platform super admin');
+
+// Keep the activity log a sensible size (default: one year).
+Artisan::command('opryx:prune-audit {--days=365}', function () {
+    $n = DB::table('audit_logs')->where('created_at', '<', now()->subDays((int) $this->option('days')))->delete();
+    $this->info("$n old activity rows removed.");
+})->purpose('Delete activity-log rows older than N days');
+Schedule::command('opryx:prune-audit')->weekly();

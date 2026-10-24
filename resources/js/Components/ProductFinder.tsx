@@ -20,7 +20,7 @@ export default function ProductFinder({ items, onPick, placeholder = 'Scan barco
         if (hit) pick(hit); else { beep(false); setMsg({ ok: false, text: `No product with code “${q.trim()}”.` }); setQ(''); } };
     return (
         <div className="relative">
-            <form onSubmit={submit}><input ref={ref} value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder} autoComplete="off"
+            <form onSubmit={submit}><input data-scan ref={ref} value={q} onChange={(e) => setQ(e.target.value)} placeholder={placeholder} autoComplete="off"
                 className="w-full rounded-lg border-0 px-4 py-3 text-base shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-brand-600" /></form>
             {matches.length > 0 && !byCode.has(q.trim().toLowerCase()) && (
                 <ul className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-lg bg-white py-1 shadow-lg ring-1 ring-slate-200">{matches.map((p) => (

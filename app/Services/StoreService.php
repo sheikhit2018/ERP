@@ -26,6 +26,7 @@ final class StoreService extends InventoryService {
         $d = Validator::make($data, ['id' => 'nullable|integer', 'name' => 'required|string|max:80', 'type' => 'required|in:warehouse,shop', 'address' => 'nullable|string|max:200', 'active' => 'boolean'])->validate();
         self::main();
         $l = !empty($d['id']) ? Location::findOrFail($d['id']) : new Location();
+        if (!$l->exists || (!$l->active && ($d['active'] ?? true))) \App\Support\Subscription::assertWithin(app(\App\Tenancy\TenantContext::class)->id(), 'locations');
         if (Location::where('name', $d['name'])->where('id', '!=', $l->id ?? 0)->exists()) $this->fail('A location with that name already exists.');
         if ($l->is_main && isset($d['active']) && !$d['active']) $this->fail('The main warehouse cannot be deactivated.');
         if ($l->exists && !$l->is_main && isset($d['active']) && !$d['active'] && LocationStock::where('location_id', $l->id)->where('quantity', '>', 0)->exists()) $this->fail('Move this location\'s stock out before deactivating it.');

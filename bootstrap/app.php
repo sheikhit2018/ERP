@@ -18,11 +18,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->web(append: [
             \App\Http\Middleware\HandleInertiaRequests::class,
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
+            \App\Http\Middleware\AuditTrail::class,
         ]);
 
         // API (integrations / future mobile app): same-site session or Sanctum token.
         $middleware->statefulApi();
-        $middleware->api(prepend: [\App\Http\Middleware\ResolveTenant::class]);
+        $middleware->api(prepend: [\App\Http\Middleware\ResolveTenant::class], append: [\App\Http\Middleware\EnforceSubscription::class, \App\Http\Middleware\AuditTrail::class]);
 
         // The tenant must be known before authentication and route model binding.
         $middleware->prependToPriorityList(
@@ -33,6 +34,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'tenant' => \App\Http\Middleware\ResolveTenant::class,
             'tenant.role' => \App\Http\Middleware\RequireTenantRole::class,
+            'tenant.billing' => \App\Http\Middleware\EnforceSubscription::class,
+            'super' => \App\Http\Middleware\RequireSuperAdmin::class,
         ]);
 
         $middleware->redirectGuestsTo(fn () => route('login'));
@@ -43,7 +46,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->respond(function ($response, \Throwable $e, \Illuminate\Http\Request $request) {
             if ($request->header('X-Inertia') && !$request->isMethod('GET')
                 && $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
-                && in_array($e->getStatusCode(), [403, 404, 409, 422], true)) {
+                && in_array($e->getStatusCode(), [402, 403, 404, 409, 422], true)) {
                 return back()->with('error', $e->getMessage() ?: 'Action not allowed.');
             }
             return $response;

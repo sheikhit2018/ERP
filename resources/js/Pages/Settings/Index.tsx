@@ -25,7 +25,7 @@ function Section({ title, desc, children }: { title: string; desc?: ReactNode; c
     return <Card className="mb-6" title={title}><div className="space-y-4 p-5">{desc && <div className="text-sm text-slate-600">{desc}</div>}{children}</div></Card>;
 }
 
-export default function Settings({ values, secrets, woo, urls, steadfastToken, smsLog }: PageProps<Props>) {
+export default function Settings({ values, secrets, woo, urls, steadfastToken, smsLog, brand }: PageProps<Props>) {
     const [tab, setTab] = useState(() => new URLSearchParams(location.search).get('tab') || 'couriers');
     const [v, setV] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(values).map(([k, x]) => [k, x ?? ''])));
     const [sec, setSec] = useState<Record<string, string>>({});
@@ -148,11 +148,24 @@ export default function Settings({ values, secrets, woo, urls, steadfastToken, s
                 </Section>
             </>}
 
-            {tab === 'company' && (
-                <Section title="Invoice">
-                    <Field label="Note printed on invoices" hint="e.g. return policy, hotline"><Input value={v['company.invoice_note']} onChange={set('company.invoice_note')} /></Field>
+            {tab === 'company' && <>
+                <Section title="Logo" desc="Printed on invoices and POS receipts. PNG / JPG / WebP, max 300 KB.">
+                    <div className="flex flex-wrap items-center gap-4">
+                        {brand?.logo ? <img src={brand.logo} alt="" className="h-16 w-auto rounded ring-1 ring-slate-200" /> : <div className="flex h-16 w-24 items-center justify-center rounded bg-slate-100 text-xs text-slate-400">No logo</div>}
+                        <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => { const f = e.target.files?.[0]; if (f) router.post('/settings/logo', { logo: f }, { forceFormData: true, preserveScroll: true }); }} className="text-sm" />
+                        {brand?.logo && <Button variant="ghost" onClick={() => router.post('/settings/logo', { remove: true }, { preserveScroll: true })}>Remove</Button>}
+                    </div>
                 </Section>
-            )}
+                <Section title="Company details (invoice header)">
+                    <div className="grid gap-4 sm:grid-cols-3">
+                        <Field label="Address"><Input value={v['company.address']} onChange={set('company.address')} /></Field>
+                        <Field label="Phone / hotline"><Input value={v['company.phone']} onChange={set('company.phone')} /></Field>
+                        <Field label="Email"><Input value={v['company.email']} onChange={set('company.email')} /></Field>
+                    </div>
+                    <Field label="Note printed on invoices" hint="e.g. return policy, hotline"><Input value={v['company.invoice_note']} onChange={set('company.invoice_note')} /></Field>
+                    <Field label="Default language for staff" hint="Each person can switch in the sidebar."><Select value={v['company.locale'] || 'en'} onChange={set('company.locale')}><option value="en">English</option><option value="bn">বাংলা (Bangla)</option></Select></Field>
+                </Section>
+            </>}
         </AuthenticatedLayout>
     );
 }

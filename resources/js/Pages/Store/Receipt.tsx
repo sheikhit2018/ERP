@@ -8,13 +8,13 @@ type Sale = { id: number; status: string; subtotal_minor: number; discount_minor
     customer_phone: string | null; created_at: string; items: Item[]; location: { name: string; address: string | null } };
 
 /** 80mm thermal receipt. Opens print automatically. */
-export default function Receipt({ sale, cashier, tenant }: PageProps<{ sale: Sale; cashier: string | null }>) {
+export default function Receipt({ sale, cashier, tenant, brand }: PageProps<{ sale: Sale; cashier: string | null }>) {
     useEffect(() => { const t = setTimeout(() => window.print(), 300); return () => clearTimeout(t); }, []);
     return (
         <div className="mx-auto w-[300px] bg-white p-3 font-mono text-[12px] text-black">
             <Head title={`Receipt #${sale.id}`} />
             <style>{`@media print { @page { size: 80mm auto; margin: 3mm; } .noprint { display: none } }`}</style>
-            <div className="text-center"><div className="text-base font-bold">{tenant?.name}</div><div>{sale.location.name}</div>{sale.location.address && <div>{sale.location.address}</div>}</div>
+            <div className="text-center">{brand?.logo && <img src={brand.logo} alt="" className="mx-auto mb-1 h-12 w-auto grayscale" />}<div className="text-base font-bold">{tenant?.name}</div>{brand?.phone && <div>{brand.phone}</div>}<div>{sale.location.name}</div>{sale.location.address && <div>{sale.location.address}</div>}</div>
             <div className="my-2 border-t border-dashed border-black" />
             <div className="flex justify-between"><span>Receipt #{sale.id}</span><span>{dateTime(sale.created_at)}</span></div>
             {sale.customer_name && <div>Customer: {sale.customer_name} {sale.customer_phone}</div>}
@@ -30,7 +30,7 @@ export default function Receipt({ sale, cashier, tenant }: PageProps<{ sale: Sal
             <div className="flex justify-between"><span>Paid ({sale.method})</span><span>{taka(sale.tendered_minor || sale.total_minor)}</span></div>
             {sale.tendered_minor > sale.total_minor && <div className="flex justify-between"><span>Change</span><span>{taka(sale.tendered_minor - sale.total_minor)}</span></div>}
             <div className="my-2 border-t border-dashed border-black" />
-            <div className="text-center">Served by {cashier}<br />Thank you!</div>
+            <div className="text-center">Served by {cashier}<br />{brand?.invoice_note ?? 'Thank you!'}</div>
             <div className="noprint mt-4 flex justify-center gap-3 font-sans text-sm"><button onClick={() => window.print()} className="rounded bg-slate-900 px-3 py-1.5 text-white">Print</button><Link href="/pos" className="px-3 py-1.5 text-slate-600">Back to POS</Link></div>
         </div>
     );

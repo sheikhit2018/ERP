@@ -26,6 +26,7 @@ class TeamController extends Controller {
             'password' => ['nullable', Password::min(8)], 'role' => 'required|in:'.implode(',', self::ROLES),
         ]);
         $tenant = app(TenantContext::class)->id();
+        \App\Support\Subscription::assertWithin($tenant, 'users');
         DB::transaction(function () use ($d, $tenant) {
             $user = User::where('email', strtolower($d['email']))->first();
             if (!$user) {

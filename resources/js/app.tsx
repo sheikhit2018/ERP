@@ -22,3 +22,8 @@ createInertiaApp({
         color: '#4B5563',
     },
 });
+
+// Installable app (PWA): register the service worker in production.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}

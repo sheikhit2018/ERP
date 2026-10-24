@@ -128,7 +128,7 @@ export default function Returns({ couriers }: PageProps<{ couriers: Couriers }>)
                     <Field label="Courier"><Select value={courier} onChange={(e) => setCourier(e.target.value)} disabled={list.length > 0}>
                         {Object.entries(couriers).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
                     <form onSubmit={scan} className="sm:col-span-2"><Field label="Scan product barcode (or tracking label)">
-                        <Input ref={input} autoFocus value={code} onChange={(e) => setCode(e.target.value)} placeholder="Scan each returned piece" /></Field></form>
+                        <Input data-scan ref={input} autoFocus value={code} onChange={(e) => setCode(e.target.value)} placeholder="Scan each returned piece" /></Field></form>
                     <div className="sm:col-span-3"><Field label="Note (optional)"><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Return challan no., rider name…" maxLength={190} /></Field></div>
                 </div>
                 {msg && <p className={`mx-5 mb-5 rounded-lg px-3 py-2 text-sm ${msg.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`}>{msg.text}</p>}

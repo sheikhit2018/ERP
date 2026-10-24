@@ -120,6 +120,7 @@ class InventoryService {
             $hash = $this->hash($hashData);
             $old = SalesOrder::where('idempotency_key', $d['idempotency_key'])->first();
             if ($old) return $this->replay($old, $hash);
+            \App\Support\Subscription::assertWithin(app(TenantContext::class)->id(), 'orders');
             $order = SalesOrder::create(['idempotency_key'=>$d['idempotency_key'], 'request_hash'=>$hash,
                 'status'=>$d['status'], 'customer'=>$d['customer'], 'currency'=>$d['currency'], 'created_by'=>$actor,
                 'customer_phone'=>\App\Support\Phone::normalize($d['customer']['phone'])]);

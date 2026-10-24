@@ -20,7 +20,7 @@ class SettingsController extends Controller {
     public const FIELDS = ['orders.web_status', 'sms.enabled', 'sms.provider', 'sms.sender_id', 'sms.username', 'sms.url', 'sms.on_confirmed', 'sms.on_shipped', 'sms.on_delivered',
         'sms.tpl_confirmed', 'sms.tpl_shipped', 'sms.tpl_delivered', 'courier.steadfast.enabled', 'courier.pathao.enabled', 'courier.pathao.client_id',
         'courier.pathao.username', 'courier.pathao.store_id', 'courier.pathao.sandbox', 'courier.redx.enabled', 'courier.redx.sandbox', 'courier.redx.pickup_store_id',
-        'courier.auto_sync', 'company.invoice_note'];
+        'courier.auto_sync', 'company.invoice_note', 'company.address', 'company.phone', 'company.email', 'company.locale'];
 
     public function index(Request $r) {
         $all = Settings::all();
@@ -46,7 +46,17 @@ class SettingsController extends Controller {
         if (!empty($d['regenerate_woo'])) $put['store.woo_secret'] = Str::random(40);
         if (!empty($d['regenerate_steadfast'])) $put['courier.steadfast.webhook_token'] = Str::random(40);
         Settings::put($put);
+        \App\Support\Brand::forget();
         return back()->with('success', 'Settings saved.');
+    }
+
+    /** Company logo for invoices / receipts: small PNG, JPG or WebP kept inside the settings (no public file storage needed). */
+    public function logo(Request $r) {
+        if ($r->boolean('remove')) { Settings::put(['company.logo' => null]); return back()->with('success', 'Logo removed.'); }
+        $f = $r->validate(['logo' => 'required|file|mimes:png,jpg,jpeg,webp|max:300'])['logo'];
+        $mime = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'webp' => 'image/webp'][strtolower($f->extension())] ?? 'image/png';
+        Settings::put(['company.logo' => "data:$mime;base64,".base64_encode((string) file_get_contents($f->getRealPath()))]);
+        return back()->with('success', 'Logo saved.');
     }
 
     /** Send one test SMS with the saved gateway settings. */

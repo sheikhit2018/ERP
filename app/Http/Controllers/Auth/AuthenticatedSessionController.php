@@ -31,7 +31,18 @@ class AuthenticatedSessionController extends Controller
     {
         $request->authenticate();
 
+        $user = $request->user();
+        if ($user->hasTwoFactor()) {
+            // Password was right; finish only after the authenticator code.
+            Auth::guard('web')->logout();
+            $request->session()->regenerate();
+            $request->session()->put('2fa.user', $user->id);
+            $request->session()->put('2fa.remember', $request->boolean('remember'));
+            return redirect()->route('two-factor.challenge');
+        }
+
         $request->session()->regenerate();
+        \App\Support\Audit::log('auth.login', [], $user->id);
 
         return redirect()->intended(route('dashboard', absolute: false));
     }
@@ -41,6 +52,7 @@ class AuthenticatedSessionController extends Controller
      */
     public function destroy(Request $request): RedirectResponse
     {
+        if ($request->user()) \App\Support\Audit::log('auth.logout', [], $request->user()->id);
         Auth::guard('web')->logout();
 
         $request->session()->invalidate();

@@ -29,7 +29,7 @@ export default function ScanChecklist({ items, state, autoFocus = true }: { item
     return (
         <div className="space-y-2">
             <div className="flex gap-2">
-                <input ref={ref} autoFocus={autoFocus} value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off"
+                <input data-scan ref={ref} autoFocus={autoFocus} value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off"
                     onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); scan(); } }}
                     placeholder="Scan each item's barcode" className="block w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-brand-500 focus:ring-brand-500" />
                 <button type="button" onClick={() => { state.setScanned({}); setMsg(null); ref.current?.focus(); }} className="whitespace-nowrap rounded-lg px-3 text-xs text-slate-500 hover:bg-slate-100">Reset</button>
