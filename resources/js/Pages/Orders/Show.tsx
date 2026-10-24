@@ -6,6 +6,7 @@ import { Head, Link, router, useForm } from '@inertiajs/react';
 import { FormEvent } from 'react';
 import ScanChecklist, { useScanChecklist } from '@/Components/ScanChecklist';
 import BarcodeSvg from '@/Components/BarcodeSvg';
+import { RiskCard, useCustomerRisk } from '@/Components/CustomerRisk';
 
 type Order = {
     id: number; status: string; source: string; note: string | null; created_at: string; delivery_charge_minor: number; discount_minor: number;
@@ -25,6 +26,7 @@ export default function ShowOrder({ order, logs, role }: PageProps<{ order: Orde
     const act = (path: string, confirmText?: string) => { if (!confirmText || window.confirm(confirmText)) router.post(`/orders/${order.id}/${path}`, {}, { preserveScroll: true }); };
     const checkItems = order.items.map((i) => ({ product_id: i.product.id, label: i.product.label ?? i.product.name, sku: i.product.sku, barcode: i.product.barcode, quantity: i.quantity }));
     const check = useScanChecklist(checkItems);
+    const risk = useCustomerRisk(order.customer.phone, order.id);
     const handover = (e: FormEvent) => {
         e.preventDefault(); if (order.status !== 'packed' && !check.done) return;
         ship.transform((d) => (order.status === 'packed' ? d : { ...d, scans: check.scans }));
@@ -82,6 +84,7 @@ export default function ShowOrder({ order, logs, role }: PageProps<{ order: Orde
                             <a href={`tel:${order.customer.phone}`} className="block text-brand-700">{order.customer.phone}</a>
                             <div className="text-slate-600">{order.customer.address}</div>
                             {order.note && <div className="mt-3 rounded-lg bg-amber-50 p-2 text-amber-900">{order.note}</div>}
+                            {risk && <div className="mt-3 print:hidden"><RiskCard r={risk} /></div>}
                         </div>
                     </Card>
 

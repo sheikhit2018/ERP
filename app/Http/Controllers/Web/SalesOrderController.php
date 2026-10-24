@@ -24,7 +24,8 @@ class SalesOrderController extends Controller {
                 });
             })
             ->latest('id')->paginate(25)->withQueryString();
-        return Inertia::render('Orders/Index', ['orders' => $orders, 'filters' => ['status' => $status, 'q' => $q], 'statuses' => self::STATUSES]);
+        $risk = \App\Services\CustomerRisk::forPhones($orders->getCollection()->pluck('customer_phone')->filter()->all());
+        return Inertia::render('Orders/Index', ['risk' => $risk, 'orders' => $orders, 'filters' => ['status' => $status, 'q' => $q], 'statuses' => self::STATUSES]);
     }
     public function create() {
         return Inertia::render('Orders/Create', [

@@ -1,3 +1,4 @@
+import { RiskBadge, Risk } from '@/Components/CustomerRisk';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Button, Card, Empty, Input, LinkButton, PageHeader, Pagination, StatusBadge, td, th } from '@/Components/ui';
 import { STATUS_LABEL, dateTime, taka } from '@/lib/format';
@@ -7,12 +8,12 @@ import { useState } from 'react';
 
 type Order = {
     id: number; status: string; source: string; created_at: string; delivery_charge_minor: number; discount_minor: number;
-    customer: { name: string; phone: string; address: string };
+    customer: { name: string; phone: string; address: string }; customer_phone?: string | null;
     items: { quantity: number; unit_price_minor: number }[];
     shipment: { courier: string; tracking_id: string } | null;
 };
 
-export default function Orders({ orders, filters, statuses, role }: PageProps<{ orders: Paginated<Order>; filters: { status?: string; q?: string }; statuses: string[] }>) {
+export default function Orders({ orders, filters, statuses, role, risk }: PageProps<{ orders: Paginated<Order>; filters: { status?: string; q?: string }; statuses: string[]; risk: Record<string, Risk> }>) {
     const [q, setQ] = useState(filters.q ?? '');
     const go = (p: Record<string, string | undefined>) => router.get('/orders', { ...filters, ...p }, { preserveState: true, replace: true });
     const canCreate = role !== 'warehouse';
@@ -43,7 +44,7 @@ export default function Orders({ orders, filters, statuses, role }: PageProps<{ 
                                 return (
                                     <tr key={o.id} className="cursor-pointer hover:bg-slate-50" onClick={() => router.visit(`/orders/${o.id}`)}>
                                         <td className={td}><Link href={`/orders/${o.id}`} className="font-semibold text-brand-700">#{o.id}</Link><div className="text-xs capitalize text-slate-400">{o.source}</div></td>
-                                        <td className={td}>{o.customer?.name}<div className="text-xs text-slate-500">{o.customer?.phone}</div></td>
+                                        <td className={td}>{o.customer?.name}<div className="flex items-center gap-1.5 text-xs text-slate-500">{o.customer?.phone} {o.customer_phone && <RiskBadge r={risk[o.customer_phone]} />}</div></td>
                                         <td className={`${td} text-right font-medium tabular-nums`}>{taka(total)}</td>
                                         <td className={td}><StatusBadge status={o.status} /></td>
                                         <td className={`${td} text-xs`}>{o.shipment ? <>{o.shipment.courier}<div className="text-slate-500">{o.shipment.tracking_id}</div></> : <span className="text-slate-300">—</span>}</td>

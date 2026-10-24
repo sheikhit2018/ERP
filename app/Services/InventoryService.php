@@ -111,7 +111,8 @@ class InventoryService {
             $old = SalesOrder::where('idempotency_key', $d['idempotency_key'])->first();
             if ($old) return $this->replay($old, $hash);
             $order = SalesOrder::create(['idempotency_key'=>$d['idempotency_key'], 'request_hash'=>$hash,
-                'status'=>$d['status'], 'customer'=>$d['customer'], 'currency'=>$d['currency'], 'created_by'=>$actor]);
+                'status'=>$d['status'], 'customer'=>$d['customer'], 'currency'=>$d['currency'], 'created_by'=>$actor,
+                'customer_phone'=>\App\Support\Phone::normalize($d['customer']['phone'])]);
             foreach ($d['items'] as $item) {
                 $s = $this->stock($item['product_id']);
                 SalesOrderItem::create($item + ['sales_order_id'=>$order->id]);

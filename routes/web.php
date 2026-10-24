@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Web\{CourierController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
+use App\Http\Controllers\Web\{CourierController, CustomerController, StockInController, BomController, DashboardController, ManufacturingPageController, ProductController,
     RawMaterialController, ReturnPageController, SalesOrderController, StockLedgerController, TeamController};
 use App\Http\Controllers\CourierReturnController;
 use Illuminate\Support\Facades\Route;
@@ -41,6 +41,8 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
     });
 
     Route::middleware('tenant.role:sales,warehouse')->group(function () {
+        Route::get('/customers', [CustomerController::class, 'index'])->name('customers.index');
+        Route::get('/customers/risk', [CustomerController::class, 'risk'])->name('customers.risk');
         Route::get('/orders', [SalesOrderController::class, 'index'])->name('orders.index');
         Route::get('/orders/{order}', [SalesOrderController::class, 'show'])->whereNumber('order')->name('orders.show');
     });

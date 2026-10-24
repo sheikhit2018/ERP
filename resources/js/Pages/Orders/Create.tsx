@@ -5,6 +5,7 @@ import { PageProps } from '@/types';
 import { Head, useForm } from '@inertiajs/react';
 import { FormEvent, useMemo, useRef, useState } from 'react';
 import { beep, lookupBarcode } from '@/lib/scan';
+import { RiskCard, useCustomerRisk } from '@/Components/CustomerRisk';
 
 type Product = { id: number; sku: string; name: string; label: string; color: string | null; size: string | null; barcode: string | null; price_minor: number; stock: { available_stock: number } | null };
 type Line = { product_id: string; quantity: string; price: string };
@@ -14,6 +15,7 @@ export default function CreateOrder({ products }: PageProps<{ products: Product[
     const [key] = useState(uuid);
     const [lines, setLines] = useState<Line[]>([{ product_id: '', quantity: '1', price: '' }]);
     const f = useForm({ name: '', phone: '', address: '', status: 'confirmed', source: 'manual', delivery: '0', discount: '0', note: '' });
+    const risk = useCustomerRisk(f.data.phone);
     const byId = useMemo(() => new Map(products.map((p) => [String(p.id), p])), [products]);
     const setLine = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
     const subtotal = lines.reduce((a, l) => a + toMinor(l.price) * (parseInt(l.quantity) || 0), 0);
@@ -66,6 +68,7 @@ export default function CreateOrder({ products }: PageProps<{ products: Product[
                         <div className="grid gap-4 p-5 sm:grid-cols-2">
                             <Field label="Name" error={e['customer.name']}><Input value={f.data.name} onChange={(x) => f.setData('name', x.target.value)} required autoFocus /></Field>
                             <Field label="Phone" error={e['customer.phone']}><Input inputMode="tel" value={f.data.phone} onChange={(x) => f.setData('phone', x.target.value)} placeholder="01XXXXXXXXX" required /></Field>
+                            {risk && <div className="sm:col-span-2"><RiskCard r={risk} /></div>}
                             <div className="sm:col-span-2"><Field label="Full address" error={e['customer.address']}><Input value={f.data.address} onChange={(x) => f.setData('address', x.target.value)} placeholder="House, road, area, thana, district" required /></Field></div>
                         </div>
                     </Card>

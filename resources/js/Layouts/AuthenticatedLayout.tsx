@@ -25,6 +25,7 @@ const NAV: NavGroup[] = [
     { title: 'Overview', items: [{ label: 'Dashboard', href: '/dashboard', match: 'dashboard', icon: I.home }] },
     { title: 'Sales & logistics', items: [
         { label: 'Orders', href: '/orders', match: 'orders.*', roles: ['sales', 'warehouse'], icon: I.order },
+        { label: 'Customers', href: '/customers', match: 'customers.*', roles: ['sales', 'warehouse'], icon: I.team },
         { label: 'Packing station', href: '/courier/pack', match: 'pack.*', roles: ['warehouse'], icon: I.scan },
         { label: 'Courier hub', href: '/courier', match: 'courier.*', roles: ['sales', 'warehouse', 'qc'], icon: I.truck },
         { label: 'Returns & QC', href: '/returns', match: 'returns.*', roles: ['qc', 'warehouse'], icon: I.ret },
