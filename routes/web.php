@@ -98,6 +98,7 @@ Route::middleware(['tenant', 'auth', 'tenant.role'])->group(function () {
     Route::middleware('tenant.role:owner')->group(function () {
         Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
         Route::post('/settings', [SettingsController::class, 'update'])->name('settings.update');
+        Route::post('/settings/sms-test', [SettingsController::class, 'smsTest'])->name('settings.sms-test');
         Route::get('/team', [TeamController::class, 'index'])->name('team.index');
         Route::post('/team', [TeamController::class, 'store'])->name('team.store');
         Route::put('/team/{member}', [TeamController::class, 'update'])->whereNumber('member')->name('team.update');

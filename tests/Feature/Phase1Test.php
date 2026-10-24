@@ -186,4 +186,36 @@ class Phase1Test extends TestCase {
         $this->assertTrue($props['secrets']['store.shopify_secret']);
         $this->assertArrayNotHasKey('store.shopify_secret', $props['values']);
     }
+
+    public function test_sms_on_confirm_ship_deliver_with_gateway_and_retry(): void {
+        \Illuminate\Support\Facades\Http::fake(['bulksmsbd.net/*' => \Illuminate\Support\Facades\Http::sequence()
+            ->push(['response_code' => 202, 'message_id' => 1])->push(['response_code' => 202])->push(['response_code' => 1007, 'error_message' => 'Balance low'])
+            ->push(['response_code' => 202]), 'api.sms.net.bd/*' => ['error' => 0, 'msg' => 'ok']]);
+        // Off by default: no SMS.
+        $this->order('01711000000');
+        $this->assertSame(0, DB::table('sms_logs')->count());
+        $this->post_('/settings', ['values' => ['sms.enabled' => '1', 'sms.provider' => 'bulksmsbd', 'sms.sender_id' => 'SHEIKHIT', 'sms.on_confirmed' => '1', 'sms.on_shipped' => '1',
+            'sms.on_delivered' => '1', 'sms.tpl_confirmed' => 'Dear {name}, order #{order} ({total} Tk) confirmed. {company}',
+            'sms.tpl_shipped' => '#{order} with {courier}, tracking {tracking}, pay {cod} Tk', 'sms.tpl_delivered' => 'Delivered #{order}'],
+            'secrets' => ['sms.api_key' => 'KEY123']])->assertSessionHasNoErrors();
+        $o = $this->order('+8801811000000', 2);
+        $this->ship($o, 'TRK9');
+        $this->post_('/courier/delivered', ['courier' => 'steadfast', 'tracking_ids' => ['TRK9']]);
+        $logs = DB::table('sms_logs')->where('sales_order_id', $o)->orderBy('id')->get();
+        $this->assertSame(['confirmed', 'shipped', 'delivered'], $logs->pluck('event')->all());
+        $this->assertSame('Dear Karim, order #'.$o.' (1,060 Tk) confirmed. Sheikh IT', $logs[0]->message);
+        $this->assertSame("#$o with Steadfast, tracking TRK9, pay 1,060 Tk", $logs[1]->message);
+        $this->assertSame(['sent', 'sent', 'failed'], $logs->pluck('status')->all());
+        $this->assertSame('Balance low', $logs[2]->error);
+        \Illuminate\Support\Facades\Http::assertSent(fn ($req) => str_contains($req->url(), 'bulksmsbd.net/api/smsapi') && $req['number'] === '8801811000000' && $req['api_key'] === 'KEY123' && $req['senderid'] === 'SHEIKHIT');
+        // Same event again does not send twice; the scheduler resends the failed one.
+        $this->travel(2)->minutes();
+        $this->artisan('opryx:sms-retry')->assertSuccessful();
+        $this->assertSame('sent', DB::table('sms_logs')->where('id', $logs[2]->id)->value('status'));
+        // Test SMS from settings with another provider; bad numbers are refused.
+        $this->post_('/settings', ['values' => ['sms.provider' => 'smsnetbd']]);
+        $this->postJson($this->base.'/settings/sms-test', ['phone' => '01911000000'])->assertOk();
+        $this->postJson($this->base.'/settings/sms-test', ['phone' => '12345'])->assertStatus(422);
+        $this->get_('/settings')->assertOk()->assertInertia(fn ($p) => $p->has('smsLog', 3));
+    }
 }

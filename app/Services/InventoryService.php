@@ -119,6 +119,7 @@ class InventoryService {
                 $this->move($s, 'available_stock', -$item['quantity'], 'reserve', "ORDER:$order->id", $actor);
                 $this->move($s, 'reserved_stock', $item['quantity'], 'reserve', "ORDER:$order->id", $actor);
             }
+            if ($order->status === 'confirmed') Sms::orderEvent($order->id, 'confirmed');
             return $order;
         });
     }
@@ -127,7 +128,7 @@ class InventoryService {
             $o = SalesOrder::whereKey($id)->lockForUpdate()->firstOrFail();
             if ($o->status === 'confirmed') return $o;
             abort_unless($o->status === 'pending', 409, 'Only pending orders can be confirmed.');
-            $o->status = 'confirmed'; $o->save(); return $o; // reservation already exists
+            $o->status = 'confirmed'; $o->save(); Sms::orderEvent($o->id, 'confirmed'); return $o; // reservation already exists
         });
     }
     public function cancel(int $id, int $actor): SalesOrder {
@@ -172,6 +173,7 @@ class InventoryService {
                 $this->move($stock, 'transit_stock', (int)$i->quantity, 'handover', "SHIPMENT:$s->id", $actor);
             }
             $o->status = 'shipped'; $o->save(); $this->log($s, 'handed_over', $actor, $scans !== null ? ['scan_verified'=>true] : []);
+            Sms::orderEvent($o->id, 'shipped');
             return $o;
         });
     }
@@ -185,7 +187,7 @@ class InventoryService {
                 $this->move($this->stock((int)$i->product_id), 'transit_stock', -(int)$i->quantity, 'delivered', "SHIPMENT:$s->id", $actor);
             }
             $s->status = 'delivered'; $s->delivered_at = now(); $s->save(); $o->status = 'delivered'; $o->save();
-            $this->log($s, 'delivered', $actor); return $o;
+            $this->log($s, 'delivered', $actor); Sms::orderEvent($o->id, 'delivered'); return $o;
         });
     }
     public function scan(array $data, int $actor): CourierReturn {

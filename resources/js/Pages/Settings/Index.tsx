@@ -6,7 +6,8 @@ import { Head, router } from '@inertiajs/react';
 import { ReactNode, useState } from 'react';
 
 type Props = { values: Record<string, string | null>; secrets: Record<string, boolean>; woo: { url: string; secret: string };
-    urls: { shopify: string; steadfast: string }; steadfastToken: string };
+    urls: { shopify: string; steadfast: string }; steadfastToken: string;
+    smsLog: { id: number; sales_order_id: number | null; event: string; phone: string; status: string; error: string | null; created_at: string }[] };
 const TABS: [string, string][] = [['couriers', 'Courier API'], ['sms', 'SMS'], ['store', 'Online store'], ['company', 'Company']];
 const SMS_PROVIDERS: [string, string][] = [['bulksmsbd', 'BulkSMSBD'], ['smsnetbd', 'SMS.net.bd (Alpha SMS)'], ['greenweb', 'Greenweb'], ['sslwireless', 'SSL Wireless'], ['custom', 'Other (custom URL)']];
 export const SMS_VARS = '{name} {order} {total} {cod} {courier} {tracking} {company}';
@@ -24,7 +25,7 @@ function Section({ title, desc, children }: { title: string; desc?: ReactNode; c
     return <Card className="mb-6" title={title}><div className="space-y-4 p-5">{desc && <div className="text-sm text-slate-600">{desc}</div>}{children}</div></Card>;
 }
 
-export default function Settings({ values, secrets, woo, urls, steadfastToken }: PageProps<Props>) {
+export default function Settings({ values, secrets, woo, urls, steadfastToken, smsLog }: PageProps<Props>) {
     const [tab, setTab] = useState(() => new URLSearchParams(location.search).get('tab') || 'couriers');
     const [v, setV] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(values).map(([k, x]) => [k, x ?? ''])));
     const [sec, setSec] = useState<Record<string, string>>({});
@@ -120,6 +121,15 @@ export default function Settings({ values, secrets, woo, urls, steadfastToken }:
                     <div className="flex flex-wrap gap-2"><Input value={test.phone} onChange={(e) => setTest({ ...test, phone: e.target.value })} placeholder="01XXXXXXXXX" className="max-w-xs" />
                         <Button type="button" variant="secondary" onClick={sendTest} disabled={!test.phone}>Send test</Button></div>
                     {test.msg && <p className="text-sm text-slate-700">{test.msg}</p>}
+                </Section>
+                <Section title="Recent SMS">
+                    {smsLog.length === 0 ? <p className="text-sm text-slate-500">No SMS sent yet.</p> : (
+                        <table className="min-w-full text-sm"><tbody className="divide-y divide-slate-100">
+                            {smsLog.map((l) => <tr key={l.id}><td className="py-1.5 text-xs text-slate-500">{new Date(l.created_at).toLocaleString('en-GB')}</td><td className="py-1.5">{l.sales_order_id ? `#${l.sales_order_id}` : ''}</td>
+                                <td className="py-1.5 capitalize">{l.event}</td><td className="py-1.5 font-mono text-xs">{l.phone}</td>
+                                <td className={`py-1.5 text-xs font-semibold ${l.status === 'sent' ? 'text-emerald-700' : l.status === 'failed' ? 'text-rose-600' : 'text-slate-500'}`}>{l.status}{l.error ? ` — ${l.error}` : ''}</td></tr>)}
+                        </tbody></table>
+                    )}
                 </Section>
             </>}
 

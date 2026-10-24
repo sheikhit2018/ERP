@@ -33,6 +33,7 @@ class SettingsController extends Controller {
             'woo' => ['url' => "$base/api/hooks/woocommerce", 'secret' => $all['store.woo_secret']],
             'urls' => ['shopify' => "$base/api/hooks/shopify", 'steadfast' => "$base/api/hooks/steadfast"],
             'steadfastToken' => $all['courier.steadfast.webhook_token'],
+            'smsLog' => \App\Models\SmsLog::latest('id')->take(30)->get(['id', 'sales_order_id', 'event', 'phone', 'status', 'error', 'created_at']),
         ]);
     }
 
@@ -46,5 +47,12 @@ class SettingsController extends Controller {
         if (!empty($d['regenerate_steadfast'])) $put['courier.steadfast.webhook_token'] = Str::random(40);
         Settings::put($put);
         return back()->with('success', 'Settings saved.');
+    }
+
+    /** Send one test SMS with the saved gateway settings. */
+    public function smsTest(Request $r) {
+        $d = $r->validate(['phone' => 'required|string|max:20']);
+        [$ok, $err] = \App\Services\Sms::send($d['phone'], 'Opryx test SMS from '.($r->attributes->get('tenant')->name ?? 'your company').'. Your SMS gateway works.');
+        return response()->json(['ok' => $ok, 'message' => $ok ? 'Sent. Check the phone.' : "Not sent: $err"], $ok ? 200 : 422);
     }
 }
