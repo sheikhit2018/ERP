@@ -21,7 +21,9 @@ const COLUMNS: Column[] = [
     { key: 'note', label: 'Note', guess: /note|remark/i },
 ];
 
-export default function OrderImport({ inbox, failed, flash }: PageProps<{ inbox: Inbox[]; failed: number }>) {
+type Hook = { id: number; source: string; status: number | null; created_at: string; woo_order?: string | number | null; woo_status?: string; topic?: string | null; result?: string };
+
+export default function OrderImport({ inbox, failed, flash, hooks = [] }: PageProps<{ inbox: Inbox[]; failed: number; hooks: Hook[] }>) {
     const [status, setStatus] = useState('confirmed');
     const [busy, setBusy] = useState(false);
     return (
@@ -69,6 +71,18 @@ export default function OrderImport({ inbox, failed, flash }: PageProps<{ inbox:
                                 </tr>
                             ))}
                         </tbody>
+                    </table></div>
+                )}
+            </Card>
+            <Card className="mt-6" title="Website connection log" actions={<span className="text-xs text-slate-500">Every call your online store makes to Opryx</span>}>
+                {hooks.length === 0 ? <Empty>Nothing received from your website yet. Check that the webhook in WooCommerce is Active and its URL / secret match Settings → Online store.</Empty> : (
+                    <div className="overflow-x-auto"><table className="min-w-full divide-y divide-slate-100">
+                        <thead><tr><th className={th}>When</th><th className={th}>Store order</th><th className={th}>Store status</th><th className={th}>What Opryx did</th></tr></thead>
+                        <tbody className="divide-y divide-slate-100">{hooks.map((h) => (
+                            <tr key={h.id}><td className={`${td} whitespace-nowrap text-xs`}>{dateTime(h.created_at)}</td>
+                                <td className={td}>{h.woo_order ? `${h.source === 'woocommerce' ? 'WC' : ''}#${h.woo_order}` : '—'}<div className="text-[11px] text-slate-400">{h.topic}</div></td>
+                                <td className={`${td} text-xs`}>{h.woo_status ?? '—'}</td>
+                                <td className={`${td} text-xs ${h.status && h.status >= 400 ? 'text-rose-600' : h.result?.startsWith('imported') ? 'text-emerald-700' : h.result?.startsWith('failed') ? 'text-rose-600' : 'text-slate-600'}`}>{h.result}</td></tr>))}</tbody>
                     </table></div>
                 )}
             </Card>

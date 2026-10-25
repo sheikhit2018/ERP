@@ -19,22 +19,33 @@ class WebhookController extends Controller {
         $secret = (string) Settings::get('store.woo_secret', '');
         abort_if($secret === '', 404);
         // WooCommerce sends "webhook_id=…" (unsigned form post) once when the webhook is saved.
-        if (!$r->isJson() && $r->has('webhook_id')) return response()->json(['ok' => true]);
-        abort_unless(self::valid($r, $secret, 'X-WC-Webhook-Signature'), 401, 'Bad signature.');
+        if (!$r->isJson() && $r->has('webhook_id')) { self::trace('woocommerce', ['result' => 'ping (webhook saved)'], 200); return response()->json(['ok' => true]); }
+        if (!self::valid($r, $secret, 'X-WC-Webhook-Signature')) { self::trace('woocommerce', ['result' => 'wrong secret / signature'], 401); abort(401, 'Bad signature.'); }
         $payload = $r->json()->all();
         $status = self::wooStatus((string) ($payload['status'] ?? ''));
+        $meta = ['woo_order' => $payload['number'] ?? ($payload['id'] ?? null), 'woo_status' => $status, 'topic' => $r->header('X-WC-Webhook-Topic')];
         // Cancelled / refunded in WooCommerce after it reached Opryx: release the reserved stock (until it is handed to the courier).
         if (in_array($status, ['cancelled', 'failed', 'refunded', 'trash'], true)) {
             $cancelled = $s->cancelFromStore('woocommerce', (string) ($payload['id'] ?? ''), SystemActor::id());
+            self::trace('woocommerce', $meta + ['result' => $cancelled ? 'cancelled in Opryx, stock released' : 'ignored (cancelled)'], 200);
             return response()->json(['ok' => true, 'skipped' => true, 'cancelled' => $cancelled]);
         }
         // Optional gate: only orders that reached the chosen WooCommerce status (e.g. "confirmed" after the call) come in.
         $only = self::importStatuses();
-        if ($only && !in_array($status, $only, true)) return response()->json(['ok' => true, 'skipped' => true, 'reason' => "waiting for status: ".implode(' / ', $only)]);
+        if ($only && !in_array($status, $only, true)) {
+            self::trace('woocommerce', $meta + ['result' => 'waiting — status is not '.implode(' / ', $only)], 200);
+            return response()->json(['ok' => true, 'skipped' => true, 'reason' => 'waiting for status: '.implode(' / ', $only)]);
+        }
         $n = OrderImportService::fromWoo($payload);
-        if (!$n || $status === 'checkout-draft') return response()->json(['ok' => true, 'skipped' => true]);
+        if (!$n || $status === 'checkout-draft') { self::trace('woocommerce', $meta + ['result' => 'ignored (no items / draft)'], 200); return response()->json(['ok' => true, 'skipped' => true]); }
         $in = $s->receive('woocommerce', $n, $payload, SystemActor::id(), $only ? 'confirmed' : null);
+        self::trace('woocommerce', $meta + ['result' => $in->status === 'imported' ? "imported as order #{$in->sales_order_id}" : 'failed: '.$in->error], 200);
         return response()->json(['ok' => true, 'status' => $in->status, 'order_id' => $in->sales_order_id]);
+    }
+
+    /** Every webhook call is written to the activity log so the owner can see what the store sent and what Opryx did. */
+    private static function trace(string $source, array $meta, int $status): void {
+        \App\Support\Audit::log("webhook.$source", $meta + ['_status' => $status]);
     }
 
     /** "wc-confirmed", "Confirmed" -> "confirmed". */

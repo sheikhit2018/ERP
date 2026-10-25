@@ -16,6 +16,10 @@ class OrderImportController extends Controller {
         return Inertia::render('Orders/Import', [
             'inbox' => IncomingOrder::latest('id')->take(100)->get(['id', 'source', 'external_id', 'reference', 'status', 'error', 'sales_order_id', 'created_at']),
             'failed' => IncomingOrder::where('status', 'failed')->count(),
+            // What the online store sent and what Opryx did with it (newest first).
+            'hooks' => \Illuminate\Support\Facades\DB::table('audit_logs')->where('tenant_id', app(\App\Tenancy\TenantContext::class)->id())
+                ->where('action', 'like', 'webhook.%')->orderByDesc('id')->limit(30)->get(['id', 'action', 'status', 'meta', 'created_at'])
+                ->map(fn ($h) => ['id' => $h->id, 'source' => substr($h->action, 8), 'status' => $h->status, 'created_at' => $h->created_at] + (json_decode((string) $h->meta, true) ?: [])),
         ]);
     }
 

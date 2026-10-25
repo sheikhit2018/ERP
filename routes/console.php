@@ -18,7 +18,8 @@ Artisan::command('opryx:sms-retry', function () {
 })->purpose('Send queued / failed customer SMS');
 
 // Hostinger cron (hPanel → Advanced → Cron Jobs, every minute):  php /home/USER/domains/.../artisan schedule:run
-Schedule::command('opryx:sms-retry')->everyFiveMinutes()->withoutOverlapping();
+// Shared hosting has no proc_open, so scheduled jobs run in-process (Schedule::call), not as sub-processes.
+Schedule::call(fn () => Artisan::call('opryx:sms-retry'))->name('opryx-sms-retry')->everyFiveMinutes()->withoutOverlapping();
 
 // Ask courier APIs for the status of open parcels (companies with "check automatically" switched on).
 Artisan::command('opryx:courier-sync', function () {
@@ -32,7 +33,7 @@ Artisan::command('opryx:courier-sync', function () {
         } catch (\Throwable $e) { report($e); } finally { $ctx->clear(); }
     }
 })->purpose('Sync parcel statuses from courier APIs');
-Schedule::command('opryx:courier-sync')->hourly()->withoutOverlapping();
+Schedule::call(fn () => Artisan::call('opryx:courier-sync'))->name('opryx-courier-sync')->hourly()->withoutOverlapping();
 
 // Make (or remove) a platform super admin: php artisan opryx:super-admin you@example.com [--remove]
 Artisan::command('opryx:super-admin {email} {--remove}', function (string $email) {
@@ -45,4 +46,14 @@ Artisan::command('opryx:prune-audit {--days=365}', function () {
     $n = DB::table('audit_logs')->where('created_at', '<', now()->subDays((int) $this->option('days')))->delete();
     $this->info("$n old activity rows removed.");
 })->purpose('Delete activity-log rows older than N days');
-Schedule::command('opryx:prune-audit')->weekly();
+Schedule::call(fn () => Artisan::call('opryx:prune-audit'))->name('opryx-prune-audit')->weekly();
+
+// Support check without a shell: php artisan opryx:diag
+Artisan::command('opryx:diag', function () {
+    foreach (DB::table('tenants')->orderBy('id')->get(['id', 'name']) as $t) {
+        app(\App\Tenancy\TenantContext::class)->set((int) $t->id); \App\Support\Settings::flush();
+        $this->line("#{$t->id} {$t->name} | woo gate: ".(\App\Support\Settings::get('store.woo_import_status') ?: '(every order)').' | web status: '.\App\Support\Settings::get('orders.web_status', 'pending')
+            .' | inbox: '.DB::table('incoming_orders')->where('tenant_id', $t->id)->count().' | orders: '.DB::table('sales_orders')->where('tenant_id', $t->id)->count());
+        foreach (DB::table('audit_logs')->where('tenant_id', $t->id)->where('action', 'like', 'webhook.%')->orderByDesc('id')->limit(8)->get() as $h) $this->line("   {$h->created_at} {$h->status} {$h->meta}");
+    }
+})->purpose('Show integration status per company');

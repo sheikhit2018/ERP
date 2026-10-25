@@ -178,6 +178,10 @@ class Phase1Test extends TestCase {
         $send('/api/hooks/woocommerce', ['status' => 'cancelled'] + $gate, 'X-WC-Webhook-Signature', $secret)->assertOk()->assertJsonPath('cancelled', true);
         $this->assertSame(['cancelled', $avail], [DB::table('sales_orders')->where('id', $g->id)->value('status'), (int) DB::table('finished_good_stocks')->value('available_stock')]);
         $this->post_('/settings', ['values' => ['store.woo_import_status' => '']]);
+        $hooks = collect($this->get_('/orders/import')->viewData('page')['props']['hooks']);
+        $this->assertTrue($hooks->contains(fn ($h) => str_starts_with($h['result'], 'waiting')));
+        $this->assertTrue($hooks->contains(fn ($h) => str_starts_with($h['result'], 'imported as order')));
+        $this->assertTrue($hooks->contains(fn ($h) => $h['result'] === 'wrong secret / signature' && $h['status'] === 401));
 
         // Shopify: not configured -> 404; paid order with unknown SKU -> inbox failed -> fix SKU -> retry imports with payment.
         $shop = ['id' => 9001, 'name' => '#1001', 'financial_status' => 'paid', 'total_price' => '500.00', 'total_discounts' => '0.00', 'shipping_lines' => [],
