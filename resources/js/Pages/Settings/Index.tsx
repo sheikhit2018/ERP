@@ -139,8 +139,11 @@ export default function Settings({ values, secrets, woo, urls, steadfastToken, s
                         <option value="pending">Pending — call the customer to confirm first</option><option value="confirmed">Confirmed — ready to pack</option></Select></Field>
                     <p className="text-xs text-slate-500">Products are matched by SKU or barcode. If a product is not found, the order waits in Orders → Import → Inbox; fix the SKU and press Retry.</p>
                 </Section>
-                <Section title="WooCommerce" desc={<>WordPress → WooCommerce → Settings → Advanced → <b>Webhooks</b> → Add webhook: Status <b>Active</b>, Topic <b>Order created</b>, API version <b>WP REST API v3</b>, and paste the URL and secret below.</>}>
+                <Section title="WooCommerce" desc={<>WordPress → WooCommerce → Settings → Advanced → <b>Webhooks</b> → Add webhook: Status <b>Active</b>, Topic <b>Order updated</b> (add a second one with <b>Order created</b> too), API version <b>WP REST API v3</b>, and paste the URL and secret below.</>}>
                     <div className="grid gap-4 sm:grid-cols-2"><Copy label="Delivery URL" value={woo.url} /><Copy label="Secret" value={woo.secret} /></div>
+                    <Field label="Bring an order into Opryx only when its WooCommerce status is" hint="e.g. confirmed — your staff call the customer and set this status in WooCommerce; then the order arrives here as Confirmed and stock is reserved. Leave empty to bring every new order. Several: confirmed, processing">
+                        <Input className="max-w-sm" placeholder="Every new order" value={v['store.woo_import_status']} onChange={set('store.woo_import_status')} /></Field>
+                    <p className="text-xs text-slate-500">If an order is later cancelled / refunded in WooCommerce, Opryx cancels it too and releases the stock — unless it was already handed to the courier.</p>
                     <button type="button" className="text-sm text-slate-500 hover:underline" onClick={() => window.confirm('Make a new secret? The old one stops working.') && save({ regenerate_woo: true })}>Make a new secret</button>
                 </Section>
                 <Section title="Shopify" desc={<>Shopify admin → Settings → Notifications → <b>Webhooks</b> → Create webhook: Event <b>Order creation</b>, Format <b>JSON</b>, URL below. Copy the signing secret shown on that page into the field.</>}>

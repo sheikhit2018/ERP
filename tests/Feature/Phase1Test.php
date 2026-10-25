@@ -164,6 +164,21 @@ class Phase1Test extends TestCase {
         $this->assertSame(3, DB::table('sales_orders')->count());
         $this->post($this->base.'/api/hooks/woocommerce', ['webhook_id' => 5])->assertOk(); // WooCommerce ping
 
+        // Gate: only orders whose WooCommerce status is "confirmed" (wc-confirmed) come in, as Confirmed; cancel in Woo releases stock.
+        $this->post_('/settings', ['values' => ['store.woo_import_status' => 'wc-Confirmed']])->assertSessionHasNoErrors();
+        $avail = (int) DB::table('finished_good_stocks')->value('available_stock');
+        $gate = ['id' => 888, 'number' => '888', 'status' => 'processing'] + $woo;
+        $send('/api/hooks/woocommerce', $gate, 'X-WC-Webhook-Signature', $secret)->assertOk()->assertJsonPath('skipped', true);
+        $send('/api/hooks/woocommerce', ['status' => 'pending'] + $gate, 'X-WC-Webhook-Signature', $secret)->assertOk()->assertJsonPath('skipped', true);
+        $this->assertSame([3, $avail], [DB::table('sales_orders')->count(), (int) DB::table('finished_good_stocks')->value('available_stock')]);
+        $send('/api/hooks/woocommerce', ['status' => 'confirmed'] + $gate, 'X-WC-Webhook-Signature', $secret)->assertOk()->assertJsonPath('status', 'imported');
+        $send('/api/hooks/woocommerce', ['status' => 'confirmed'] + $gate, 'X-WC-Webhook-Signature', $secret)->assertOk(); // later updates: no duplicate
+        $g = DB::table('sales_orders')->latest('id')->first();
+        $this->assertSame([4, 'confirmed', $avail - 2], [DB::table('sales_orders')->count(), $g->status, (int) DB::table('finished_good_stocks')->value('available_stock')]);
+        $send('/api/hooks/woocommerce', ['status' => 'cancelled'] + $gate, 'X-WC-Webhook-Signature', $secret)->assertOk()->assertJsonPath('cancelled', true);
+        $this->assertSame(['cancelled', $avail], [DB::table('sales_orders')->where('id', $g->id)->value('status'), (int) DB::table('finished_good_stocks')->value('available_stock')]);
+        $this->post_('/settings', ['values' => ['store.woo_import_status' => '']]);
+
         // Shopify: not configured -> 404; paid order with unknown SKU -> inbox failed -> fix SKU -> retry imports with payment.
         $shop = ['id' => 9001, 'name' => '#1001', 'financial_status' => 'paid', 'total_price' => '500.00', 'total_discounts' => '0.00', 'shipping_lines' => [],
             'payment_gateway_names' => ['bkash'], 'shipping_address' => ['name' => 'Tania', 'phone' => '01612345678', 'address1' => 'Uttara', 'city' => 'Dhaka'],
@@ -178,7 +193,7 @@ class Phase1Test extends TestCase {
         $sh = DB::table('sales_orders')->where('customer_phone', '01612345678')->first();
         $this->assertSame('confirmed', $sh->status);
         $this->assertSame([50000, 'bkash'], [(int) DB::table('order_payments')->where('sales_order_id', $sh->id)->value('amount_minor'), DB::table('order_payments')->where('sales_order_id', $sh->id)->value('method')]);
-        $this->get_('/orders/import')->assertOk()->assertInertia(fn ($p) => $p->has('inbox', 2)->where('failed', 0));
+        $this->get_('/orders/import')->assertOk()->assertInertia(fn ($p) => $p->has('inbox', 3)->where('failed', 0));
 
         // Settings never send saved secrets back.
         $res = $this->get_('/settings')->assertOk()->assertDontSee('shpss_test');

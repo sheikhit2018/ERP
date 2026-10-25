@@ -20,7 +20,7 @@ class SettingsController extends Controller {
     public const FIELDS = ['orders.web_status', 'sms.enabled', 'sms.provider', 'sms.sender_id', 'sms.username', 'sms.url', 'sms.on_confirmed', 'sms.on_shipped', 'sms.on_delivered',
         'sms.tpl_confirmed', 'sms.tpl_shipped', 'sms.tpl_delivered', 'courier.steadfast.enabled', 'courier.pathao.enabled', 'courier.pathao.client_id',
         'courier.pathao.username', 'courier.pathao.store_id', 'courier.pathao.sandbox', 'courier.redx.enabled', 'courier.redx.sandbox', 'courier.redx.pickup_store_id',
-        'courier.auto_sync', 'company.invoice_note', 'company.address', 'company.phone', 'company.email', 'company.locale'];
+        'courier.auto_sync', 'company.invoice_note', 'company.address', 'company.phone', 'company.email', 'company.locale', 'store.woo_import_status'];
 
     public function index(Request $r) {
         $all = Settings::all();

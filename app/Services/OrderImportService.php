@@ -63,12 +63,12 @@ class OrderImportService {
     }
 
     /** Webhook / retry: store in the inbox, then try to create the order. Never throws. */
-    public function receive(string $source, array $n, array $payload, int $actor): IncomingOrder {
+    public function receive(string $source, array $n, array $payload, int $actor, ?string $status = null): IncomingOrder {
         $in = IncomingOrder::firstOrNew(['source' => $source, 'external_id' => (string) $n['external_id']]);
         if ($in->exists && $in->status === 'imported') return $in;
         $in->fill(['reference' => $n['reference'] ? mb_substr((string) $n['reference'], 0, 80) : null, 'payload' => $payload]);
         try {
-            $o = $this->create($n + ['source' => 'website'], $actor, Settings::get('orders.web_status', 'pending') === 'confirmed' ? 'confirmed' : 'pending');
+            $o = $this->create($n + ['source' => 'website'], $actor, $status ?? (Settings::get('orders.web_status', 'pending') === 'confirmed' ? 'confirmed' : 'pending'));
             $in->fill(['status' => 'imported', 'error' => null, 'sales_order_id' => $o->id]);
         } catch (ValidationException $e) {
             $in->fill(['status' => 'failed', 'error' => mb_substr(implode(' ', Arr::flatten($e->errors())), 0, 500)]);
@@ -79,11 +79,25 @@ class OrderImportService {
         return $in;
     }
 
+    /** The store cancelled an order that is already in Opryx: cancel it here too if it has not left the warehouse. */
+    public function cancelFromStore(string $source, string $externalId, int $actor): bool {
+        if ($externalId === '') return false;
+        $in = IncomingOrder::where('source', $source)->where('external_id', $externalId)->first();
+        if (!$in) return false;
+        if ($in->status !== 'imported') { $in->fill(['status' => 'skipped', 'error' => 'Cancelled in the online store.'])->save(); return false; }
+        $o = SalesOrder::find($in->sales_order_id);
+        if (!$o || !in_array($o->status, ['pending', 'confirmed', 'packed'], true)) return false;
+        $this->inventory->cancel($o->id, $actor);
+        $o->forceFill(['note' => mb_substr(trim(($o->note ?? '').' [Cancelled in online store]'), 0, 1000)])->save();
+        return true;
+    }
+
     /** Retry a failed inbox entry (after adding the missing product / stock). */
     public function retry(IncomingOrder $in, int $actor): IncomingOrder {
         $n = match ($in->source) { 'woocommerce' => self::fromWoo($in->payload), 'shopify' => self::fromShopify($in->payload), default => null };
         abort_unless($n, 422, 'Cannot retry this entry.');
-        return $this->receive($in->source, $n, $in->payload, $actor);
+        $gated = $in->source === 'woocommerce' && \App\Http\Controllers\WebhookController::importStatuses();
+        return $this->receive($in->source, $n, $in->payload, $actor, $gated ? 'confirmed' : null);
     }
 
     private static function minor(mixed $v): int { return (int) round(((float) str_replace(',', '', (string) $v)) * 100); }
