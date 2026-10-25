@@ -49,11 +49,16 @@ Artisan::command('opryx:prune-audit {--days=365}', function () {
 Schedule::call(fn () => Artisan::call('opryx:prune-audit'))->name('opryx-prune-audit')->weekly();
 
 // Support check without a shell: php artisan opryx:diag
-Artisan::command('opryx:diag', function () {
+Artisan::command('opryx:diag {--payload : print order meta of the latest website order}', function () {
     foreach (DB::table('tenants')->orderBy('id')->get(['id', 'name']) as $t) {
         app(\App\Tenancy\TenantContext::class)->set((int) $t->id); \App\Support\Settings::flush();
         $this->line("#{$t->id} {$t->name} | woo gate: ".(\App\Support\Settings::get('store.woo_import_status') ?: '(every order)').' | web status: '.\App\Support\Settings::get('orders.web_status', 'pending')
             .' | inbox: '.DB::table('incoming_orders')->where('tenant_id', $t->id)->count().' | orders: '.DB::table('sales_orders')->where('tenant_id', $t->id)->count());
         foreach (DB::table('audit_logs')->where('tenant_id', $t->id)->where('action', 'like', 'webhook.%')->orderByDesc('id')->limit(8)->get() as $h) $this->line("   {$h->created_at} {$h->status} {$h->meta}");
+        if ($this->option('payload') && ($in = \App\Models\IncomingOrder::latest('id')->first())) {
+            $p = $in->payload;
+            $this->line('   meta: '.json_encode(array_map(fn ($m) => [$m['key'] ?? '', $m['value'] ?? ''], $p['meta_data'] ?? []), JSON_UNESCAPED_UNICODE));
+            foreach ($p['line_items'] ?? [] as $l) $this->line('   line: '.json_encode(['name' => $l['name'] ?? '', 'pid' => $l['product_id'] ?? '', 'vid' => $l['variation_id'] ?? '', 'sku' => $l['sku'] ?? '', 'meta' => $l['meta_data'] ?? []], JSON_UNESCAPED_UNICODE));
+        }
     }
 })->purpose('Show integration status per company');

@@ -1,7 +1,7 @@
 <?php
 namespace App\Services;
 
-use App\Models\{IncomingOrder, OrderPayment, Product, SalesOrder};
+use App\Models\{IncomingOrder, OrderPayment, Product, ProductStyle, SalesOrder, StoreProductLink};
 use App\Support\{Phone, Settings};
 use App\Tenancy\TenantContext;
 use Illuminate\Support\Arr;
@@ -28,12 +28,64 @@ class OrderImportService {
         return Product::where('barcode', $code)->first() ?? Product::whereRaw('lower(sku) = ?', [mb_strtolower($code)])->first();
     }
 
+    /** Same size written different ways on a website: "2XL" = "XXL", "x-large" = "XL". */
+    private static function sizeKey(string $v): string {
+        $v = strtoupper(preg_replace('/[\s\-_.]/', '', trim($v)));
+        $v = strtr($v, ['EXTRALARGE' => 'XL', 'XLARGE' => 'XL', 'LARGE' => 'L', 'MEDIUM' => 'M', 'SMALL' => 'S']);
+        if (preg_match('/^([2-6])XL$/', $v, $m)) $v = str_repeat('X', (int) $m[1]).'L';
+        return $v;
+    }
+
+    /**
+     * Website line without our SKU: use the saved link (website product → style + colour), or recognise the style and
+     * colour from the product name and remember it. The size comes from the line (variation) or the order (custom field).
+     * Returns [product|null, problem|null].
+     */
+    private function resolveLine(array $l, array $n): array {
+        $store = $n['store'] ?? null; $ext = (string) ($l['ext_id'] ?? ''); $name = trim((string) ($l['ext_name'] ?? ''));
+        if (!$store || $ext === '') return [null, null];
+        $link = StoreProductLink::where('source', $store)->where('external_id', $ext)->first();
+        if (!$link || !$link->linked()) {
+            [$style, $color] = $this->guessStyle($name);
+            $link ??= new StoreProductLink(['source' => $store, 'external_id' => $ext]);
+            $link->external_name = mb_substr($name, 0, 255);
+            if ($style) $link->fill(['product_style_id' => $style->id, 'color' => $color, 'auto' => true]);
+            $link->save();
+            if (!$style) return [null, "Website product not linked yet: \"$name\" — link it once in Orders → Import."];
+        }
+        if ($link->product_id) return [Product::find($link->product_id), null];
+        $variants = Product::where('style_id', $link->product_style_id)->when($link->color, fn ($q, $c) => $q->where('color', $c))->get();
+        if ($variants->isEmpty()) return [null, "No Opryx variants for \"$name\" (".($link->color ?? 'any colour').')'];
+        if ($variants->count() === 1) return [$variants->first(), null];
+        $bySize = $variants->filter(fn ($v) => $v->size !== null)->keyBy(fn ($v) => self::sizeKey((string) $v->size));
+        foreach ([$l['size_hints'] ?? [], $n['size_hints'] ?? []] as $hints) {
+            $hit = collect($hints)->map(fn ($h) => self::sizeKey((string) $h))->filter(fn ($k) => $bySize->has($k))->unique()->values();
+            if ($hit->count() === 1) return [$bySize[$hit[0]], null];
+            if ($hit->count() > 1) return [null, "Several sizes on the order for \"$name\": ".$hit->implode(', ')];
+        }
+        return [null, "Size not found for \"$name\". Opryx sizes: ".$variants->pluck('size')->filter()->implode(', ')];
+    }
+
+    /** Longest style name contained in the website product name, then the longest of its colours in the name. */
+    private function guessStyle(string $name): array {
+        $hay = mb_strtolower($name);
+        if ($hay === '') return [null, null];
+        $style = ProductStyle::get(['id', 'name', 'code'])->filter(fn ($s) => mb_strlen($s->name) >= 3 && str_contains($hay, mb_strtolower($s->name)))
+            ->sortByDesc(fn ($s) => mb_strlen($s->name))->first();
+        if (!$style) return [null, null];
+        $colors = Product::where('style_id', $style->id)->whereNotNull('color')->distinct()->pluck('color');
+        if ($colors->count() <= 1) return [$style, $colors->first()];
+        $color = $colors->filter(fn ($c) => str_contains($hay, mb_strtolower($c)))->sortByDesc(fn ($c) => mb_strlen($c))->first();
+        return $color ? [$style, $color] : [null, null];
+    }
+
     /** @return SalesOrder  (throws ValidationException / HttpException with a readable message) */
     public function create(array $n, int $actor, string $status): SalesOrder {
         $lines = []; $missing = [];
         foreach ($n['lines'] as $l) {
             $p = $this->product((string) $l['code']);
-            if (!$p) { $missing[] = $l['code'] ?: '(empty)'; continue; }
+            if (!$p) { [$p, $problem] = $this->resolveLine($l, $n); if ($problem) throw ValidationException::withMessages(['inventory' => [$problem]]); }
+            if (!$p) { $missing[] = $l['code'] ?: ($l['ext_name'] ?? '(empty)'); continue; }
             $qty = max(1, (int) $l['qty']);
             $price = $l['price'] !== null && $l['price'] !== '' ? (int) $l['price'] : (int) $p->price_minor;
             if (isset($lines[$p->id])) { $lines[$p->id]['quantity'] += $qty; continue; }
@@ -68,7 +120,7 @@ class OrderImportService {
         if ($in->exists && $in->status === 'imported') return $in;
         $in->fill(['reference' => $n['reference'] ? mb_substr((string) $n['reference'], 0, 80) : null, 'payload' => $payload]);
         try {
-            $o = $this->create($n + ['source' => 'website'], $actor, $status ?? (Settings::get('orders.web_status', 'pending') === 'confirmed' ? 'confirmed' : 'pending'));
+            $o = $this->create($n + ['source' => 'website', 'store' => $source], $actor, $status ?? (Settings::get('orders.web_status', 'pending') === 'confirmed' ? 'confirmed' : 'pending'));
             $in->fill(['status' => 'imported', 'error' => null, 'sales_order_id' => $o->id]);
         } catch (ValidationException $e) {
             $in->fill(['status' => 'failed', 'error' => mb_substr(implode(' ', Arr::flatten($e->errors())), 0, 500)]);
@@ -100,6 +152,16 @@ class OrderImportService {
         return $this->receive($in->source, $n, $in->payload, $actor, $gated ? 'confirmed' : null);
     }
 
+    /** Short text values from WooCommerce meta (variation attributes, checkout custom fields like "সাইজ: XXL"). */
+    private static function metaValues(array $meta): array {
+        $out = [];
+        foreach ($meta as $m) foreach (['value', 'display_value'] as $k) {
+            $v = $m[$k] ?? null;
+            if (is_scalar($v) && ($v = trim((string) $v)) !== '' && mb_strlen($v) <= 20) $out[] = $v;
+        }
+        return array_values(array_unique($out));
+    }
+
     private static function minor(mixed $v): int { return (int) round(((float) str_replace(',', '', (string) $v)) * 100); }
     private static function join(array $parts): string { return implode(', ', array_values(array_filter(array_map(fn ($p) => trim((string) $p), $parts)))); }
 
@@ -112,7 +174,9 @@ class OrderImportService {
         return ['external_id' => (string) $p['id'], 'reference' => 'WC#'.($p['number'] ?? $p['id']),
             'customer' => ['name' => str_replace(', ', ' ', $name), 'phone' => $s['phone'] ?? '' ?: ($b['phone'] ?? ''), 'address' => $addr],
             'lines' => array_map(fn ($l) => ['code' => (string) ($l['sku'] ?? ''), 'qty' => (int) ($l['quantity'] ?? 1),
-                'price' => isset($l['price']) ? self::minor($l['price']) : null], $p['line_items']),
+                'price' => isset($l['price']) ? self::minor($l['price']) : null, 'ext_id' => (string) (($l['variation_id'] ?? 0) ?: ($l['product_id'] ?? '')),
+                'ext_name' => (string) ($l['name'] ?? ''), 'size_hints' => self::metaValues($l['meta_data'] ?? [])], $p['line_items']),
+            'size_hints' => self::metaValues($p['meta_data'] ?? []),
             'delivery' => self::minor($p['shipping_total'] ?? 0), 'discount' => self::minor($p['discount_total'] ?? 0),
             'paid' => $paidOnline ? self::minor($p['total'] ?? 0) : 0, 'paid_method' => str_contains(strtolower((string) ($p['payment_method'] ?? '')), 'bkash') ? 'bkash' : 'card',
             'note' => (string) ($p['customer_note'] ?? '')];
@@ -126,7 +190,10 @@ class OrderImportService {
         return ['external_id' => (string) $p['id'], 'reference' => 'SH'.($p['name'] ?? '#'.$p['id']),
             'customer' => ['name' => $s['name'] ?? self::join([$s['first_name'] ?? '', $s['last_name'] ?? '']), 'phone' => ($s['phone'] ?? '') ?: ($p['phone'] ?? ($p['customer']['phone'] ?? '')),
                 'address' => self::join([$s['address1'] ?? '', $s['address2'] ?? '', $s['city'] ?? '', $s['province'] ?? ''])],
-            'lines' => array_map(fn ($l) => ['code' => (string) ($l['sku'] ?? ''), 'qty' => (int) ($l['quantity'] ?? 1), 'price' => isset($l['price']) ? self::minor($l['price']) : null], $p['line_items']),
+            'lines' => array_map(fn ($l) => ['code' => (string) ($l['sku'] ?? ''), 'qty' => (int) ($l['quantity'] ?? 1), 'price' => isset($l['price']) ? self::minor($l['price']) : null,
+                'ext_id' => (string) (($l['variant_id'] ?? 0) ?: ($l['product_id'] ?? '')), 'ext_name' => (string) ($l['title'] ?? $l['name'] ?? ''),
+                'size_hints' => array_values(array_filter(array_merge(array_map('trim', explode('/', (string) ($l['variant_title'] ?? ''))),
+                    array_map(fn ($x) => is_scalar($x['value'] ?? null) ? (string) $x['value'] : '', $l['properties'] ?? []))))], $p['line_items']),
             'delivery' => $ship, 'discount' => self::minor($p['total_discounts'] ?? 0), 'paid' => $paid,
             'paid_method' => str_contains(strtolower(implode(',', (array) ($p['payment_gateway_names'] ?? []))), 'bkash') ? 'bkash' : 'card', 'note' => (string) ($p['note'] ?? '')];
     }

@@ -21,9 +21,30 @@ const COLUMNS: Column[] = [
     { key: 'note', label: 'Note', guess: /note|remark/i },
 ];
 
+type LinkRow = { id: number; source: string; external_id: string; external_name: string | null; style_id: number | null; style: string | null; color: string | null; auto: boolean; linked: boolean };
+type Style = { id: number; name: string; code: string; colors: string[] };
+
+/** One website product → Opryx style + colour. Size is read from each order (variation or the checkout size field). */
+function LinkPicker({ l, styles }: { l: LinkRow; styles: Style[] }) {
+    const [style, setStyle] = useState(l.style_id ? String(l.style_id) : '');
+    const [color, setColor] = useState(l.color ?? '');
+    const [edit, setEdit] = useState(!l.linked);
+    const st = styles.find((x) => String(x.id) === style);
+    if (!edit) return <span className="text-sm">{l.style}{l.color ? ` · ${l.color}` : ''} {l.auto && <span className="text-[11px] text-slate-400">(auto)</span>}
+        <button className="ml-2 text-xs text-brand-700" onClick={() => setEdit(true)}>Change</button></span>;
+    return (
+        <div className="flex flex-wrap items-center gap-2">
+            <Select className="!w-56" value={style} onChange={(e) => { setStyle(e.target.value); setColor(''); }}><option value="">Choose Opryx product…</option>
+                {styles.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.code})</option>)}</Select>
+            {st && st.colors.length > 1 && <Select className="!w-40" value={color} onChange={(e) => setColor(e.target.value)}><option value="">Colour…</option>{st.colors.map((c) => <option key={c}>{c}</option>)}</Select>}
+            <Button disabled={!style || (!!st && st.colors.length > 1 && !color)} onClick={() => router.post(`/orders/import/links/${l.id}`, { product_style_id: Number(style), color: color || null }, { preserveScroll: true })}>Save link</Button>
+        </div>
+    );
+}
+
 type Hook = { id: number; source: string; status: number | null; created_at: string; woo_order?: string | number | null; woo_status?: string; topic?: string | null; result?: string };
 
-export default function OrderImport({ inbox, failed, flash, hooks = [] }: PageProps<{ inbox: Inbox[]; failed: number; hooks: Hook[] }>) {
+export default function OrderImport({ inbox, failed, flash, hooks = [], links = [], styles = [] }: PageProps<{ inbox: Inbox[]; failed: number; hooks: Hook[]; links: LinkRow[]; styles: Style[] }>) {
     const [status, setStatus] = useState('confirmed');
     const [busy, setBusy] = useState(false);
     return (
@@ -71,6 +92,17 @@ export default function OrderImport({ inbox, failed, flash, hooks = [] }: PagePr
                                 </tr>
                             ))}
                         </tbody>
+                    </table></div>
+                )}
+            </Card>
+            <Card className="mt-6" title={`Website products ↔ Opryx${links.some((l) => !l.linked) ? ` — ${links.filter((l) => !l.linked).length} need a link` : ''}`}
+                actions={<span className="text-xs text-slate-500">Link once; the size is taken from each order</span>}>
+                {links.length === 0 ? <Empty>Website products without an Opryx SKU appear here the first time they are ordered.</Empty> : (
+                    <div className="overflow-x-auto"><table className="min-w-full divide-y divide-slate-100">
+                        <thead><tr><th className={th}>Website product</th><th className={th}>Opryx product · colour</th></tr></thead>
+                        <tbody className="divide-y divide-slate-100">{links.map((l) => (
+                            <tr key={l.id} className={l.linked ? '' : 'bg-amber-50/60'}><td className={td}>{l.external_name}<div className="text-[11px] text-slate-400 capitalize">{l.source} #{l.external_id}</div></td>
+                                <td className={td}><LinkPicker l={l} styles={styles} /></td></tr>))}</tbody>
                     </table></div>
                 )}
             </Card>

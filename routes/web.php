@@ -77,6 +77,7 @@ Route::middleware(['tenant', 'auth', 'tenant.role', 'tenant.billing'])->group(fu
         Route::post('/orders/{order}/payments', [CodController::class, 'payment'])->whereNumber('order')->name('orders.payments');
         Route::get('/orders/import', [OrderImportController::class, 'index'])->name('orders.import');
         Route::post('/orders/import', [OrderImportController::class, 'store'])->name('orders.import.store');
+        Route::post('/orders/import/links/{link}', [OrderImportController::class, 'link'])->whereNumber('link')->name('orders.import.link');
         Route::post('/orders/import/{incoming}/retry', [OrderImportController::class, 'retry'])->whereNumber('incoming')->name('orders.import.retry');
         Route::get('/orders/create', [SalesOrderController::class, 'create'])->name('orders.create');
         Route::post('/orders', [SalesOrderController::class, 'store'])->name('orders.store');

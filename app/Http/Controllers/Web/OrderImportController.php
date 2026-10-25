@@ -16,6 +16,12 @@ class OrderImportController extends Controller {
         return Inertia::render('Orders/Import', [
             'inbox' => IncomingOrder::latest('id')->take(100)->get(['id', 'source', 'external_id', 'reference', 'status', 'error', 'sales_order_id', 'created_at']),
             'failed' => IncomingOrder::where('status', 'failed')->count(),
+            // Website products ↔ Opryx styles (unlinked first).
+            'links' => \App\Models\StoreProductLink::with('style:id,name,code')->orderByRaw('case when product_style_id is null and product_id is null then 0 else 1 end')->orderByDesc('id')->limit(300)->get()
+                ->map(fn ($l) => ['id' => $l->id, 'source' => $l->source, 'external_id' => $l->external_id, 'external_name' => $l->external_name, 'style_id' => $l->product_style_id,
+                    'style' => $l->style?->name, 'color' => $l->color, 'auto' => $l->auto, 'linked' => $l->linked()]),
+            'styles' => \App\Models\ProductStyle::orderBy('name')->get(['id', 'name', 'code'])->map(fn ($st) => ['id' => $st->id, 'name' => $st->name, 'code' => $st->code,
+                'colors' => \App\Models\Product::where('style_id', $st->id)->whereNotNull('color')->distinct()->orderBy('color')->pluck('color')]),
             // What the online store sent and what Opryx did with it (newest first).
             'hooks' => \Illuminate\Support\Facades\DB::table('audit_logs')->where('tenant_id', app(\App\Tenancy\TenantContext::class)->id())
                 ->where('action', 'like', 'webhook.%')->orderByDesc('id')->limit(30)->get(['id', 'action', 'status', 'meta', 'created_at'])
@@ -58,6 +64,22 @@ class OrderImportController extends Controller {
         }
         $msg = "$created orders created".($existing ? ", $existing were already imported" : '').($failed ? ', '.count($failed).' failed (see list)' : '').'.';
         return back()->with($created || $existing ? 'success' : 'error', $msg)->with('report', $failed);
+    }
+
+    /** Link one website product to an Opryx style + colour, then retry every waiting website order. */
+    public function link(Request $r, int $link, OrderImportService $s) {
+        $d = $r->validate(['product_style_id' => 'required|integer', 'color' => 'nullable|string|max:60']);
+        $style = \App\Models\ProductStyle::findOrFail($d['product_style_id']);
+        $colors = \App\Models\Product::where('style_id', $style->id)->whereNotNull('color')->distinct()->pluck('color');
+        if ($colors->count() > 1 && !in_array($d['color'] ?? null, $colors->all(), true)) throw \Illuminate\Validation\ValidationException::withMessages(['inventory' => ['Choose the colour.']]);
+        $l = \App\Models\StoreProductLink::findOrFail($link);
+        $l->fill(['product_style_id' => $style->id, 'color' => $colors->count() > 1 ? $d['color'] : $colors->first(), 'product_id' => null, 'auto' => false])->save();
+        $done = 0; $left = 0;
+        foreach (IncomingOrder::where('source', $l->source)->where('status', 'failed')->orderBy('id')->get() as $in) {
+            $in = $s->retry($in, (int) $r->user()->id);
+            $in->status === 'imported' ? $done++ : $left++;
+        }
+        return back()->with('success', "Linked “{$l->external_name}” → {$style->name}".($l->color ? " · {$l->color}" : '').". Waiting orders imported: $done".($left ? ", still waiting: $left" : '').'.');
     }
 
     public function retry(Request $r, int $incoming, OrderImportService $s) {
